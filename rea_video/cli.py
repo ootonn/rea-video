@@ -45,6 +45,16 @@ def _ocr_lang(args) -> None:
         os.environ["REA_OCR_LANG"] = lang
 
 
+def _check_vlm_config() -> None:
+    """Fail fast on a misconfigured VLM: a typo in REA_VLM_MEDIA must not silently run text-only."""
+    from .vlm import VLMConfig
+
+    try:
+        VLMConfig.from_env()
+    except ValueError as exc:
+        raise SystemExit(f"rea-video: {exc}")
+
+
 def cmd_decompose(args) -> int:
     from .pipeline import decompose
 
@@ -55,6 +65,8 @@ def cmd_decompose(args) -> int:
 
     meta = read_json(Path(args.meta)) if args.meta else None
     use_vlm = args.vlm or (pref("vlm") == "on" and not args.no_vlm)
+    if use_vlm:
+        _check_vlm_config()
     stems = not args.no_stems and pref("stems", "on") == "on"
     lang = args.lang or pref("lang", "zh")
     if lang not in LANGS:
@@ -147,6 +159,8 @@ def cmd_eval(args) -> int:
 
     _ocr_lang(args)
 
+    if args.vlm:
+        _check_vlm_config()
     res = evaluate(Path(args.labels), Path(args.out), use_vlm=args.vlm, ocr=not args.no_ocr, reuse=not args.fresh,
                    only=set(args.only.split(",")) if args.only else None, stems=args.stems)
     print(json.dumps(res["summary"], ensure_ascii=False, indent=2))
@@ -265,8 +279,21 @@ def cmd_tiles(args) -> int:
     from .media import extract_frame, video_info
     from .visual import shot_sheet
 
+    # bad numbers used to die deep inside numpy / PIL with a traceback, or silently print an empty result
+    if args.every <= 0:
+        raise SystemExit("rea-video: --every 必须大于 0（两次抽帧的间隔秒数）")
+    if args.start < 0:
+        raise SystemExit("rea-video: --start 不能小于 0")
+    if args.cols < 1:
+        raise SystemExit("rea-video: --cols 至少为 1")
+    if args.max < 1:
+        raise SystemExit("rea-video: --max 至少为 1")
+    if args.cell < 1:
+        raise SystemExit("rea-video: --cell 至少为 1")
     info = video_info(args.video)
     end = args.end if args.end is not None else info.duration
+    if args.start >= end:
+        raise SystemExit(f"rea-video: --end 必须大于 --start（视频时长 {info.duration:.2f} 秒）")
     times = list(np.arange(args.start, end, args.every))[: args.max]
     import tempfile
 
