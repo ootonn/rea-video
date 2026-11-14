@@ -104,6 +104,8 @@ RULES = {
     # shaded pixels and many small bright peaks. Eval photo / 3D / AI frames on dark ground keep lit_smooth >= 0.47
     # and lit_peaks <= 10; a particle explainer video sits at lit_smooth 0.01-0.22, lit_peaks 5-67
     "fine_dark": {"dark": 0.4, "smooth": 0.3, "peaks": 4.0, "lit_max": 0.4, "lit_min": 0.002},
+    # measured twice with the same bounds: on the picture, and on its detail layer (the picture minus its smooth
+    # background), so a soft glow or gradient behind the graphics does not hide them
     # thin dark lines / dots on a light ground: fine_dark on the inverted picture, with a looser smoothness bound
     # (anti-aliased dark strokes shade more than glowing dots)
     "fine_light": {"smooth": 0.35},
@@ -240,17 +242,25 @@ def deterministic(f: dict, overlay: dict | None = None, text: dict | None = None
                     area=f.get('face_area', 0), faces=faces))
         graphic *= bf["graphic_factor"]
     fd = RULES["fine_dark"]
-    fine_dark = 0.0
-    if fd["lit_min"] < f.get("lit_ratio", 0.0):
-        fine_dark = (_sig((f.get("dark_ratio", 0.0) - fd["dark"]) / 0.05) * _sig((fd["smooth"] - f.get("lit_smooth", 1.0)) / 0.05)
-                     * _sig((f.get("lit_peaks", 0.0) - fd["peaks"]) / 1.0) * _sig((fd["lit_max"] - f.get("lit_ratio", 0.0)) / 0.04))
+
+    def _fine(ratio: float, smooth: float, peaks: float) -> float:
+        if ratio <= fd["lit_min"]:
+            return 0.0
+        return (_sig((f.get("dark_ratio", 0.0) - fd["dark"]) / 0.05) * _sig((fd["smooth"] - smooth) / 0.05)
+                * _sig((peaks - fd["peaks"]) / 1.0) * _sig((fd["lit_max"] - ratio) / 0.04))
+
+    plain = _fine(f.get("lit_ratio", 0.0), f.get("lit_smooth", 1.0), f.get("lit_peaks", 0.0))
+    detail = _fine(f.get("detail_ratio", 0.0), f.get("detail_smooth", 1.0), f.get("detail_peaks", 0.0))
+    by_detail = detail > plain
+    fine_dark = max(plain, detail)
     facts["fine_dark"] = round(fine_dark, 3)
     if fine_dark > 0.5:
-        ev.append(T("暗底上的亮部几乎全是细碎亮点/细线（亮部平滑过渡只占 {sm:.0%}，每百个亮像素 {pk:.0f} 个亮峰）：粒子/点云/线框类图形，"
+        sm, pk = (f.get("detail_smooth", 0.0), f.get("detail_peaks", 0.0)) if by_detail else (f.get("lit_smooth", 0.0), f.get("lit_peaks", 0.0))
+        ev.append(T("暗底上的亮部几乎全是细碎亮点/细线（{halo}亮部平滑过渡只占 {sm:.0%}，每百个亮像素 {pk:.0f} 个亮峰）：粒子/点云/线框类图形，"
                     "不是有明暗过渡的实拍、3D 表面或 AI 画面",
-                    "On a dark ground the lit part is almost all fine dots / thin lines (only {sm:.0%} of lit pixels shade gently, "
+                    "On a dark ground the lit part is almost all fine dots / thin lines ({halo}only {sm:.0%} of lit pixels shade gently, "
                     "{pk:.0f} bright peaks per 100 lit pixels): particle / point-cloud / wireframe graphics, not a shaded photo, 3D surface or AI picture",
-                    sm=f.get("lit_smooth", 0.0), pk=f.get("lit_peaks", 0.0)))
+                    sm=sm, pk=pk, halo=T("去掉平滑背景后，", "with the smooth background taken out, ") if by_detail else ""))
         graphic = max(graphic, fine_dark)
     # the same on a light ground: thin dark lines / dots (line art, generative ink, dot matrices). Pages of small text
     # are left to the screenshot cues (RULES["ui_text"]), they are a document rather than line art

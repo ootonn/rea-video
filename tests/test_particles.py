@@ -63,3 +63,27 @@ def test_code_scene_and_report_table(tmp_path):
                       "scenes": [{"shot": 1, "start": 0.0, "end": 3.0, **sc, "colours": ["青"]}]}]}
     md = "\n".join(report_md(plan))
     assert "Three.js" in md and "| #1 | 0.0–3.0s | 粒子/点云 | 青色粒子拼成的胶囊 |" in md
+
+
+def _halo(img, colour=(140, 120, 40), radius=150):
+    """Lay a large soft glow behind the picture."""
+    yy, xx = np.mgrid[0:img.shape[0], 0:img.shape[1]]
+    g = np.exp(-((xx - 240) ** 2 + (yy - 135) ** 2) / (2 * (radius / 2) ** 2))
+    return np.clip(img.astype(np.float32) + g[..., None] * np.array(colour, np.float32), 0, 255).astype(np.uint8)
+
+
+def test_a_smooth_background_does_not_hide_fine_graphics():
+    f = _feat(_halo(_particles()))
+    assert f["lit_smooth"] > 0.3  # on the plain picture the glow makes the lit part look shaded
+    assert f["detail_smooth"] < 0.3 and f["detail_peaks"] > 4  # the same bounds hold once the glow is taken out
+    probs, ev, facts = deterministic(f)
+    assert facts["fine_dark"] > 0.5 and max(probs, key=probs.get) == "code_render"
+    assert any("平滑背景" in e for e in ev)
+    _, _, facts_s = deterministic(_feat(_halo(_shaded())))  # a shaded ball on a glow stays a shaded surface
+    assert facts_s["fine_dark"] < 0.1
+    # big soft lights on a glow (night street, bokeh) are not fine graphics
+    img = np.zeros((270, 480, 3), np.uint8)
+    for x, y in [(100, 80), (220, 150), (330, 100), (400, 200)]:
+        cv2.circle(img, (x, y), 14, (200, 210, 230), -1)
+    _, _, facts_l = deterministic(_feat(_halo(cv2.GaussianBlur(img, (0, 0), 3))))
+    assert facts_l["fine_dark"] < 0.5

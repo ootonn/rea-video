@@ -32,7 +32,7 @@ VLM（能看图的多模态模型）建议配，不强制，配置方法也在 `
 # ⓪ 先看记住了什么：用户偏好（默认引擎、是否开 VLM、给你的偏好说明）和常见纠正类型
 rea-video memory
 # ① 拆解（产出 out/<名>/VIDEO.md + video/（给你读的拆片包）、report.html / report.md（给用户看）、breakdown.json、storyboard.jpg、audio.png、shots/、stems/）
-rea-video --env-file <你的 .env> decompose ref.mp4 -o out/ref --vlm --lang <zh|en>   # --lang 按用户提问的语言选（见「交付给用户」）；没有 VLM 配置就去掉 --env-file 和 --vlm；字幕/花字是日文就加 --ocr-lang ja
+rea-video --env-file <你的 .env> decompose ref.mp4 -o out/ref --vlm --lang <zh|en>   # --lang 按用户提问的语言选（见「交付给用户」）；没有 VLM 配置就去掉 --env-file 和 --vlm；字幕/花字是日文就加 --ocr-lang ja；台词是孟加拉语就加 --asr-lang bn
 # ② 看紧凑摘要：低置信镜头会被标出；先看 VLM: 那一行确认 VLM 是否生效
 rea-video summary out/ref/breakdown.json
 ```
@@ -44,6 +44,7 @@ rea-video summary out/ref/breakdown.json
 ```bash
 rea-video review out/ref                      # 写出 review_tasks.json（每镜要看的图、工具判断、优先级）和 review_answers.json（答案模板）
 # 读 review_tasks.json 的 instructions，逐镜看 images 里的图（priority=high 必看），把 label_probs / evidence / description / narrative / embedded_assets 填进 review_answers.json；narrative 是「这个镜头在讲什么」：role 选叙事作用（抓注意 / 交代背景 / 补信息 / 给证据 / 转折 / 给结论 / 引导行动 / 渲染情绪），point 一句话写它讲的那一点，报告会连成「叙事线」；若某镜头实为多刀合并（暗底图形与暗底口播交替时容易被合成一个长镜头），可加 split_suggestion（cuts 切点秒数 + labels 各段类别 + note），报告会在该镜头标注拆分建议，镜头边界本身不变
+# 有人在演的镜头填 performance：主情绪、强度、看得见的表情和动作、镜头里的变化、说话的语气；复刻提示词和配音会照它还原表演
 # 顶层 cast 填整片的角色 / 场景 / 道具（同一个角色跨镜头认成同一个，外观写到能据此复刻）和一句视觉风格；没开 VLM 时报告的「角色、场景与道具」一节全靠这里
 # 顶层 story 填报告开头的「核心看点」：summary 一句话、hook 开头几秒怎么抓人、highlights 2–4 条能火的做法（手法 + 第几秒 + 为什么有效）
 # 画面里拍到带字的东西（手机屏幕、包装、招牌）时，每镜填 overlay_text：这一镜后期加的字幕 / 花字原文，其余 OCR 文字报告当成画面内容
@@ -94,7 +95,7 @@ rea-video summary out/ref/breakdown.json      # 用并入后的结果写回复
 
 ## 3. 复刻（需要时）
 
-见 `references/remake.md`；可用的工具和方式（capsule-cinema、ChatCut、自己动手）和各自的特点列在 `references/remake-tools.md`。在本工具里直接跑：AI 镜头走 capsule-cinema（会计费，先 `rea-video remake-run --dry-run` 并征得用户同意）；实拍给拍摄方案；代码渲染用 Remotion；用户自己的素材用 `rea-video assemble` 拼回原时间线。代码渲染和用户自己的素材也可以在 ChatCut 里做。
+见 `references/remake.md`；可用的工具和方式（capsule-cinema、ChatCut、自己动手）和各自的特点列在 `references/remake-tools.md`。在本工具里直接跑：AI 镜头走 capsule-cinema（会计费，先 `rea-video remake-run --dry-run` 并征得用户同意）；实拍给拍摄方案；代码渲染用 Remotion（形状照 `frames/` 里的抠图和采样点做，做完用 `rea-video compare` 对原片打分）；用户自己的素材用 `rea-video assemble` 拼回原时间线。代码渲染和用户自己的素材也可以在 ChatCut 里做。
 
 ## 参考文件
 

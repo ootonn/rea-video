@@ -92,6 +92,22 @@ def _where(cx: float | None, cy: float | None) -> tuple[str, str] | None:
         f"subject in the {(v[1] + ' ') if v[1] else ''}{h[1]} of the frame".replace("upper centre", "upper middle").replace("lower centre", "lower middle")
 
 
+def with_acting(prompt: str, act: dict | None, image: bool = False, en: bool = False) -> str:
+    """Add the visible acting (face, body, change over time, strength) to a shot prompt, unless the prompt already
+    carries it. Readers' prompts tend to name the emotion or leave the face out, which gives a flat or mask-like remake.
+    en=True: the English prompt, which only takes English acting words."""
+    from .performance import image_line, prompt_line, prompt_line_en
+
+    line = prompt_line_en(act) if en else image_line(act) if image else prompt_line(act)
+    if not prompt or not line:
+        return prompt
+    cue = ((act or {}).get("en") or "") if en else ((act or {}).get("face") or "")
+    if cue and cue in prompt:
+        return prompt
+    end = "" if prompt.rstrip().endswith(("。", ".", "；", ";")) else ". " if en else T("。", ". ")
+    return prompt.rstrip() + end + line
+
+
 def framing_words(shot: dict) -> tuple[str, str]:
     """Shot size, camera angle, subject position and camera move as a prompt prefix, (report language, English).
     The readers' free-text prompts tend to keep the style words and drop these, which flattens the camera in a remake."""
@@ -174,7 +190,7 @@ def code_scene(shot: dict) -> dict:
     pal = motion.get("palette") or {}
     return {"picture": str(desc), "particles": facts.get("fine_dark", 0.0) > 0.5, "style": code_style(shot),
             "move": _move_words(shot.get("features") or {}), "on_screen_text": words[:6],
-            "background": pal.get("background"), "palette": [c["hex"] for c in pal.get("colours", [])[:5]],
+            "background": pal.get("background"), "palette": [c["hex"] for c in pal.get("colours", [])[:5]], "drawn": motion.get("drawn") or [],
             "events": motion.get("events", []), "sequences": motion.get("sequences", []), "layer": motion.get("layer"),
             "static": motion.get("static", []), "elements_sheet": motion.get("elements_sheet"),
             "strip": (shot.get("assets") or {}).get("strip"), "transition_in": shot.get("transition_in"),
@@ -304,11 +320,14 @@ class Planner:
             # the measured / seen framing goes in front, so a remake keeps the camera height, angle and subject position
             fw, fw_en = framing_words(shot)
             still = T("，", ", ").join(w for w in fw.split(T("，", ", ")) if not w.startswith(T("镜头", "camera ")))
+            from .performance import of as _acting
+
+            act = _acting(shot)
             plan["capsule"] = {
                 "engine": engine, "generation_type": gen_type, "duration": gen_dur,
                 "trim_to": round(dur, 3), "aspect_ratio": video.get("aspect_ratio", "9:16"),
-                "prompt": _with_framing(prompt, fw), "prompt_en": _with_framing(rep.get("video_prompt_en", ""), fw_en),
-                "image_prompt": _with_framing(rep.get("image_prompt", ""), still), "framing": fw,
+                "prompt": with_acting(_with_framing(prompt, fw), act), "prompt_en": with_acting(_with_framing(rep.get("video_prompt_en", ""), fw_en), act, en=True),
+                "image_prompt": with_acting(_with_framing(rep.get("image_prompt", ""), still), act, image=True), "framing": fw,
                 "needs_split": dur > hi,
             }
             if not prompt:
