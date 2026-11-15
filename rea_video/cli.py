@@ -362,6 +362,57 @@ def cmd_compare(args) -> int:
     return 0
 
 
+def cmd_remake(args) -> int:
+    from .remake import remake
+
+    out = Path(args.out_dir)
+    if not (out / "breakdown.json").is_file():
+        raise SystemExit(f"rea-video: {out} 下没有 breakdown.json，先运行 decompose")
+    print(json.dumps(remake(out, code=not args.no_code, overlays=not args.no_overlays), ensure_ascii=False, indent=1))
+    return 0
+
+
+def cmd_code_remake(args) -> int:
+    from .code_remake import code_remake
+
+    out = Path(args.out_dir)
+    if not (out / "breakdown.json").is_file():
+        raise SystemExit(f"rea-video: {out} 下没有 breakdown.json，先运行 decompose")
+    try:
+        res = code_remake(out, reset=args.reset, render=not args.no_render, score=not args.no_compare)
+    except ValueError as e:
+        raise SystemExit(f"rea-video: {e}")
+    res.pop("matched", None)
+    print(json.dumps(res, ensure_ascii=False, indent=1))
+    return 0
+
+
+def cmd_drive(args) -> int:
+    from .drive import drive, join
+
+    out = Path(args.out_dir)
+    if not (out / "breakdown.json").is_file():
+        raise SystemExit(f"rea-video: {out} 下没有 breakdown.json，先运行 decompose")
+    try:
+        if args.join is not None:
+            res = join(out, Path(args.join) if args.join else None)
+        else:
+            shots = None
+            if args.shots:
+                shots = []
+                for part in args.shots.split(","):
+                    a, _, z = part.strip().partition("-")
+                    shots += list(range(int(a), int(z or a) + 1))
+            res = drive(out, shots=shots, depth=args.depth, clean=not args.no_clean, prefer=args.prefer, max_s=args.max)
+            res = {k: v for k, v in res.items() if k != "segments"} | {"segments": [
+                {k: s[k] for k in ("id", "start", "end", "duration", "cut_in", "cuts_inside")} for s in res["segments"]],
+                "readme": str(out / "drive" / "README.md")}
+    except (ValueError, FileNotFoundError) as e:
+        raise SystemExit(f"rea-video: {e}")
+    print(json.dumps(res, ensure_ascii=False, indent=1))
+    return 0
+
+
 def cmd_summary(args) -> int:
     """Compact, agent-friendly view of a breakdown (instead of reading the whole JSON)."""
     from .i18n import T, join
@@ -589,7 +640,7 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--no-vlm", action="store_true", help="本次不开 VLM（覆盖 prefs 里的 vlm=on）")
     d.add_argument("--no-whole", action="store_true", help="跳过整片结构/文案 VLM 分析")
     d.add_argument("--no-ocr", action="store_true", help="不做 OCR（字幕/花字时间轴也会跳过，只剩贴纸检测）")
-    d.add_argument("--ocr-lang", choices=OCR_LANGS, help="字幕/花字的语言：zh 中英（默认）、ja 日文（首次使用自动下载识别模型）；也可用 prefs ocr_lang 设成默认")
+    d.add_argument("--ocr-lang", choices=OCR_LANGS, help="字幕/花字的语言：zh 中英（默认）、ja 日文、ko 韩文（后两种首次使用自动下载识别模型）；也可用 prefs ocr_lang 设成默认")
     d.add_argument("--no-packaging", action="store_true", help="跳过剪辑包装层（整片字幕时间轴、花字、贴纸/动图、音效卡点）；省掉约每分钟 30–50 秒")
     d.add_argument("--lang", choices=LANGS, help="报告、结论和 VLM 描述的语言：zh（默认）/ en；按用户提问的语言选，也可用 prefs lang 设成默认")
     d.add_argument("--workers", type=int, default=3)
@@ -688,6 +739,29 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--worst", type=int, default=8, help="对比图里放几个最差时刻（默认 8）")
     cp.add_argument("-o", "--out", help="输出目录：compare.json 和 compare_worst.jpg")
     cp.set_defaults(func=cmd_compare)
+
+    rm = sub.add_parser("remake", help="一条命令出复刻：代码渲染镜头重画、静图按运动重建、已生成 / 你给的镜头剪进去，其余原片占位；输出成片、对比视频和逐镜进度（remake/status.md）")
+    rm.add_argument("out_dir", help="decompose 的输出目录")
+    rm.add_argument("--no-code", action="store_true", help="不重画代码渲染镜头")
+    rm.add_argument("--no-overlays", action="store_true", help="换掉的镜头上不叠回字幕 / 花字")
+    rm.set_defaults(func=cmd_remake)
+
+    cr = sub.add_parser("code-remake", help="代码渲染镜头的第一版复刻：按场景的采样点 / 抠图、运动和背景光写出可改的工程（code/spec.json + render.py），对齐原片后渲染并打分")
+    cr.add_argument("out_dir", help="decompose 的输出目录")
+    cr.add_argument("--reset", action="store_true", help="重新生成 spec.json（默认保留改过的）")
+    cr.add_argument("--no-render", action="store_true", help="只写工程，不渲染")
+    cr.add_argument("--no-compare", action="store_true", help="渲染后不打分")
+    cr.set_defaults(func=cmd_code_remake)
+
+    dv = sub.add_parser("drive", help="舞蹈 / 动作镜头的驱动视频：擦掉字幕贴纸、在动作停顿处切段（drive/seg_XX.mp4），喂动作迁移或参考视频模型；--join 把生成好的段拼回原时间线")
+    dv.add_argument("out_dir", help="decompose 的输出目录")
+    dv.add_argument("--shots", help="只做这些镜头，如 3-7,9（默认用复刻方案里的动作驱动单元）")
+    dv.add_argument("--depth", action="store_true", help="同时出深度视频（需要 transformers + torch；没有时 README 里给 Video Depth Anything 命令）")
+    dv.add_argument("--no-clean", action="store_true", help="不擦字幕和贴纸")
+    dv.add_argument("--prefer", type=float, help="每段的理想长度（秒），默认 10")
+    dv.add_argument("--max", type=float, help="每段最长（秒），默认 15；Kling 最长 30")
+    dv.add_argument("--join", nargs="?", const="", default=None, metavar="RESULTS", help="把生成好的段（默认 drive/results.json）拼回去，写进 remake/mine.json")
+    dv.set_defaults(func=cmd_drive)
 
     sm = sub.add_parser("summary", help="紧凑打印拆解结果（低置信镜头会被标出来）")
     sm.add_argument("breakdown")

@@ -557,8 +557,11 @@ def production_plan(b: dict, out: Path, engine: str = "seedance2.0") -> dict:
             "people": sum(r["duration"] for r in gen if (r.get("faces") or 0) > 0.3) >= 1.0}
     style = _style_line(gen, b["source"].get("aspect_ratio", "")) if gen else ""
     reused = reused_footage(gen)
+    from . import dance
+
+    motion = dance.motion_indices(b)  # the moves are the point: driven from the source motion, not generated from frames
     units: list[dict] = []
-    for run in _runs(shots, same_scene, GEN_LABELS, skip=set(reused)):
+    for run in _runs(shots, same_scene, GEN_LABELS, skip=set(reused) | motion):
         for segm in _split_run(run, lim, hard, unit_min):
             prev = units[-1] if units else None
             units.append(_unit(segm, len(units) + 1, lim, model, style, cast, prev, same_prev.get(segm[0]["index"], False), unit_min))
@@ -600,6 +603,7 @@ def production_plan(b: dict, out: Path, engine: str = "seedance2.0") -> dict:
             plan["overlay_note"] = T("生成单元镜头上的{k}属于后期包装，不写进提示词；参考帧上带着的先擦掉，生成后按「剪辑包装层」的时间轴叠回",
                                      "the {k} on the generated shots is post-production packaging: keep it out of the prompts, erase it from reference frames, "
                                      "and lay it back on from the packaging timeline after generation", k=join(on_gen))
+    plan["drive"] = dance.units(b)
     plan["shoot"] = _setups(shots, sig, thr, b)
     code, cur = [], []
     for r in shots + [None]:
@@ -621,7 +625,7 @@ def production_plan(b: dict, out: Path, engine: str = "seedance2.0") -> dict:
     code_shots = {sh for c in code for sh in c["shots"]}
     if code_shots and ps.exists():
         try:
-            plan["layer_scenes"] = [{k: sc.get(k) for k in ("id", "shot", "start", "end", "points", "frames")} | {"measure": {
+            plan["layer_scenes"] = [{k: sc.get(k) for k in ("id", "shot", "start", "end", "points", "frames", "motion", "enter")} | {"measure": {
                 k: (sc.get("measure") or {}).get(k) for k in ("ground", "glow", "colours", "pieces", "box")}}
                 for sc in json.loads(ps.read_text(encoding="utf-8")).get("scenes", []) if sc.get("shot") in code_shots]
         except (OSError, ValueError, TypeError):
@@ -669,6 +673,10 @@ def summary_line(plan: dict, b: dict) -> str:
         bits.append(T("{what} → {u} 个生成单元、{c} 次 {m} 调用", "{what} → {u} generation unit{us}, {c} {m} call{cs}",
                       what=what, u=nu, us=_s(nu), c=plan["calls"], cs=_s(plan["calls"]), m=plan["model_name"])
                     + (T("（另有 {n} 镜是同一段成片重复使用，直接剪）", " (plus {n} shot{s} reusing the same clip, just cut)", n=again, s=_s(again)) if again else ""))
+    if plan.get("drive"):
+        from .dance import summary_bit
+
+        bits.append(summary_bit(plan["drive"]))
     if plan["shoot"]:
         n_set = sum(len(s["setups"]) for s in plan["shoot"])
         n_shot = sum(len(s["shots"]) for s in plan["shoot"])
@@ -700,7 +708,7 @@ def summary_line(plan: dict, b: dict) -> str:
 def report_parts(plan: dict) -> dict[str, list[str]]:
     """The remake plan cut at its subsections, so a report can place each part under the step it belongs to:
     pre (AI notes and the input primer), units, shoot, code, local, footage. The summary line is left out."""
-    heads = {T("### 生成单元", "### Generation units"): "units", T("### 拍摄场次", "### Shooting scenes"): "shoot",
+    heads = {T("### 生成单元", "### Generation units"): "units", T("### 动作驱动", "### Motion drive"): "drive", T("### 拍摄场次", "### Shooting scenes"): "shoot",
              T("### 代码合成", "### Code composition"): "code", T("### 本地重建", "### Local rebuild"): "local",
              T("### 影视原片", "### Film / TV source"): "footage"}
     parts: dict[str, list[str]] = {}
@@ -711,6 +719,22 @@ def report_parts(plan: dict) -> dict[str, list[str]]:
             continue
         parts.setdefault(key, []).append(line)
     return {k: v for k, v in parts.items() if any(x.strip() for x in v)}
+
+
+def scene_motion_words(sc: dict) -> str:
+    """A scene's measured motion in words: how it enters, zoom, turn, pan and how much single points wander."""
+    m = sc.get("motion") or {}
+    w = [T("从上一场景变形过来", "morphs in from the last scene")] if sc.get("enter") == "morph" else []
+    z, r, (px, py) = m.get("zoom", 0), m.get("rotate", 0), m.get("pan") or (0, 0)
+    if abs(z) >= 0.01:
+        w.append(T(f"{'推近' if z > 0 else '拉远'} {abs(z) * 100:.0f}%/s", f"{'zoom in' if z > 0 else 'zoom out'} {abs(z) * 100:.0f}%/s"))
+    if abs(r) >= 0.5:
+        w.append(T(f"{'顺' if r > 0 else '逆'}时针转 {abs(r):.1f}°/s", f"turns {'clockwise' if r > 0 else 'anticlockwise'} {abs(r):.1f}°/s"))
+    if max(abs(px), abs(py)) >= 0.005:
+        w.append(T(f"平移 ({px * 100:+.1f}%, {py * 100:+.1f}%)/s", f"pans ({px * 100:+.1f}%, {py * 100:+.1f}%)/s"))
+    if m.get("drift", 0) >= 0.004:
+        w.append(T("粒子各自漂动", "points wander"))
+    return T("、", ", ").join(w) or ("—" if not m else T("基本不动", "near still"))
 
 
 def layer_scenes_md(scenes: list[dict]) -> list[str]:
@@ -727,9 +751,9 @@ def layer_scenes_md(scenes: list[dict]) -> list[str]:
                "removed, alpha by how strongly it stands out), `frames/points/scene_XX.json` samples of that layer, one `x y r g b a` per row "
                "with x, y in 0–1. Place particles, trace lines or redraw shapes from these instead of guessing from a description. `track` in "
                "`frames/scenes.json` follows the layer's centre and spread over time)"), "",
-         T("| 场景 | 镜头 | 时间 | 底色 | 背景光 | 前景颜色 | 块数 | 范围 (x0 y0 x1 y1) |",
-           "| Scene | Shot | Time | Ground | Background glow | Drawn colours | Pieces | Area (x0 y0 x1 y1) |"),
-         "|---|---|---|---|---|---|---|---|"]
+         T("| 场景 | 镜头 | 时间 | 底色 | 背景光 | 前景颜色 | 块数 | 范围 (x0 y0 x1 y1) | 运动 |",
+           "| Scene | Shot | Time | Ground | Background glow | Drawn colours | Pieces | Area (x0 y0 x1 y1) | Motion |"),
+         "|---|---|---|---|---|---|---|---|---|"]
     for sc in scenes:
         m = sc.get("measure") or {}
         gl = m.get("glow") or {}
@@ -738,7 +762,7 @@ def layer_scenes_md(scenes: list[dict]) -> list[str]:
         cols = " ".join(c["hex"] for c in m.get("colours") or []) or "—"
         box = " ".join(f"{v:.2f}" for v in m.get("box") or []) or "—"
         L.append(f"| {sc['id']} | #{sc['shot']} | {sc['start']:.1f}–{sc['end']:.1f}s | {m.get('ground') or '—'} | {gw} | {cols} | "
-                 f"{m.get('pieces') or '—'} | {box} |")
+                 f"{m.get('pieces') or '—'} | {box} | {scene_motion_words(sc)} |")
     L += ["", T("做完用 `rea-video compare 原片 成片 --scenes frames/scenes.json -o 对比目录` 打分（两边各按自己的底色取前景，换了底色也能比），"
                 "按 `compare_worst.jpg` 先改分数最低的场景。",
                 "When built, score it with `rea-video compare original remake --scenes frames/scenes.json -o dir` (each side's drawn layer "
@@ -824,6 +848,10 @@ def report_md(plan: dict) -> list[str]:
             if u.get("prompt_en"):
                 L += ["", T("英文提示词：", "English prompt:"), "", "```text", u["prompt_en"], "```"]
             L += ["", "</details>"]
+    if plan.get("drive"):
+        from .dance import report_md as _drive_md
+
+        L += _drive_md(plan["drive"])
     if plan["shoot"]:
         L += ["", T("### 拍摄场次", "### Shooting scenes"), "",
               T("同一场景的镜头集中拍完再换场景；场景内先拍大景别再拍特写，不用重新布光。每条前后多留约 1s 余量。",
@@ -854,7 +882,13 @@ def report_md(plan: dict) -> list[str]:
         L += ["", T("### 代码合成", "### Code composition"), "",
               T("一个 Remotion/HTML 工程，按文字轨和版式重建（文字、界面 100% 可控，改文案只改数据）；可以让 LLM 直接写这个工程。",
                 "One Remotion / HTML project rebuilt from the text tracks and layout (text and UI are 100% controllable; changing copy is a data "
-                "change). An LLM can write this project directly."), ""]
+                "change). An LLM can write this project directly."), "",
+              T("先跑 `rea-video code-remake <拆解目录>`：按下面每个场景的采样点 / 抠图、运动和背景光写出 `code/spec.json` + `code/render.py`，"
+                "逐场景对齐原片的量和亮度后渲染出 `code/remake.mp4` 并打分。从这一版改起（改 spec.json、换采样点、或照它改写成 Remotion），不要从零写。",
+                "Start with `rea-video code-remake <breakdown folder>`: it writes `code/spec.json` + `code/render.py` from each scene's sampled "
+                "points / cut-out, motion and background glow below, matches each scene's amount and brightness to the original, renders "
+                "`code/remake.mp4` and scores it. Work from that version (edit spec.json, swap the points, or port it to Remotion) instead of "
+                "writing one from scratch."), ""]
         for c in plan["code"]:
             L.append(T("- {id}：镜头 {sh}（{a:.1f}–{z:.1f}s）", "- {id}: shots {sh} ({a:.1f}–{z:.1f}s)",
                        id=c["id"], sh=shot_ids(c["shots"]), a=c["start"], z=c["end"])

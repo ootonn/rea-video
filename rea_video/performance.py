@@ -29,8 +29,12 @@ GUIDE = """画面里有人物、动物、卡通角色或数字人在表演（脸
 - face：看得见的面部动作，不写情绪词：眼睛（睁大、眯起、看镜头、眼神躲开、眨眼）、眉（上扬、皱起、眉心收紧）、嘴（嘴角上扬或下压、抿嘴、张嘴）、脸颊和下巴
 - body：头、肩、手、姿态、呼吸（点头、歪头、耸肩、手捂嘴、身体前倾、深吸一口气）
 - arc：镜头里情绪有变化时按秒写，t 是相对镜头开头的秒：[{"t": 0.0, "state": "这一刻看得见的表情和动作"}]；没变化写 []
-- voice：画面里的角色在这一镜开口（说话、笑、叹气）时写语气、语速、音量、停顿（"压低声音，语速慢，句尾带笑"）；画外旁白或没人开口留空
+- voice：画面里的角色在这一镜开口（说话、笑、叹气）时，按听到的写语气、语速、音量、停顿（"压低声音，语速慢，句尾带笑"）；听不到声音时只写口型看得出的（大笑、喊），语气语速不猜；画外旁白或没人开口留空
 - key：true = 表演是这一镜的看点（反应镜头、情绪爆发、反转时的表情），复刻时要专门保证
+- move：只有大幅度的全身动作本身就是看点时才填（dance 舞蹈 / fight 打斗 / sport 健身运动），复刻会改用原片当动作驱动。这些都留空：带货、口播、讲解里的手势和展示商品，试穿转身、变装，走路、拿东西；全程唱歌或说话、身体只是小幅度动（点头、摆手、轻晃）的也留空，对口型 / 数字人就能做
+- movers：move 不为空时，画面里同时在做这套动作的人数（整数）
+- full_body：move 不为空时，做动作的人头到脚是不是整个都在画面里（true / false），手或脚经常出画就是 false
+- backdrop：move 不为空时，人背后的背景：clean（纯色、简单室内、干净的墙或天空）或 busy（街道、人群、杂物多、有别的人在动）
 - en：把 face、body、arc 合成一句英文，只写看得见的动作，不写情绪词（"eyes slightly red, corners of the mouth pressed down; at 1.5s she looks up"），给英文提示词用；上面几项已经是英文时留空"""
 
 
@@ -43,6 +47,34 @@ def intensity_code(v) -> str:
 
 def _txt(v, n: int = 160) -> str:
     return " ".join(str(v or "").split())[:n] if isinstance(v, (str, int, float)) else ""
+
+
+MOVES = ("dance", "fight", "sport")
+_MOVE_ALIASES = {"舞蹈": "dance", "跳舞": "dance", "舞": "dance", "打斗": "fight", "武打": "fight", "格斗": "fight", "功夫": "fight",
+                 "健身": "sport", "运动": "sport", "体育": "sport"}
+
+
+def _move(v: dict) -> dict:
+    """move / movers / full_body / backdrop: only kept when the motion itself is the point of the shot."""
+    m = str(v.get("move") or "").strip().lower()
+    m = m if m in MOVES else _MOVE_ALIASES.get(m, "")
+    if not m:
+        return {}
+    out: dict = {"move": m}
+    try:
+        n = int(v.get("movers") or 0)
+        if n > 0:
+            out["movers"] = min(n, 50)
+    except (TypeError, ValueError):
+        pass
+    fb = v.get("full_body")
+    if isinstance(fb, bool) or str(fb).lower() in ("true", "false"):
+        out["full_body"] = fb is True or str(fb).lower() == "true"
+    bd = str(v.get("backdrop") or "").strip().lower()
+    bd = {"干净": "clean", "简单": "clean", "杂乱": "busy", "复杂": "busy"}.get(bd, bd)
+    if bd in ("clean", "busy"):
+        out["backdrop"] = bd
+    return out
 
 
 def clean(v) -> dict | None:
@@ -60,8 +92,9 @@ def clean(v) -> dict | None:
     out = {"who": _txt(v.get("who"), 30), "emotion": _txt(v.get("emotion"), 20), "intensity": intensity_code(v.get("intensity")),
            "face": _txt(v.get("face")), "body": _txt(v.get("body")), "arc": sorted(arc, key=lambda a: a["t"])[:6],
            "voice": _txt(v.get("voice"), 100), "key": v.get("key") is True or str(v.get("key")).lower() == "true",
+           **_move(v),
            "en": _txt(v.get("en"), 240) if _txt(v.get("en"), 240).isascii() else ""}
-    if not any(out[k] for k in ("emotion", "face", "body", "arc", "voice")):
+    if not any(out.get(k) for k in ("emotion", "face", "body", "arc", "voice", "move")):
         return None
     return out
 
@@ -125,8 +158,8 @@ def image_line(p: dict | None) -> str:
 
 
 FILMED = ("live_action", "stop_motion", "film_footage")  # acted in front of a camera: the cues direct the actor
-ROUTE_ZH = LangDict({"voice": "先配音再驱动", "transfer": "首帧 + 表演迁移", "first_frame": "首帧定表情", "shoot": "演员照着演"},
-                    en={"voice": "voice first, then drive", "transfer": "first frame + performance transfer",
+ROUTE_ZH = LangDict({"drive": "原片当动作驱动", "voice": "先配音再驱动", "transfer": "首帧 + 表演迁移", "first_frame": "首帧定表情", "shoot": "演员照着演"},
+                    en={"drive": "source clip drives the motion", "voice": "voice first, then drive", "transfer": "first frame + performance transfer",
                         "first_frame": "expression in the first frame", "shoot": "actor plays it"})
 
 
@@ -146,6 +179,9 @@ def route_kind(p: dict | None, label: str = "") -> str:
 
 def route_text(kind: str) -> str:
     return {
+        "drive": T("动作是这一镜的看点，文字写不出来：用原片这一段当动作驱动（去掉字幕后的驱动视频 + 角色图），步骤见「动作驱动」；表情写进角色图和提示词",
+                   "The motion is the point of the shot and words cannot carry it: drive it from this stretch of the source (the drive clip with "
+                   "captions removed + a character image), steps under “Motion drive”; the expression goes in the character image and the prompt"),
         "voice": T("有台词：先按语气做配音（TTS 只在情绪转折处加语气标签，或真人录），再用音频驱动的模型出口型和表情"
                    "（Kling Avatar、OmniHuman）；用能直接出声的视频模型时，把台词和语气一起写进提示词",
                    "Speaking: make the voice with its delivery first (TTS with tone tags only where the emotion turns, or a real recording), "
@@ -190,7 +226,9 @@ def table(b: dict) -> tuple[list[list], list[str]]:
         if p.get("key"):
             emo += T(" ★看点", " ★key")
         moves = semi().join(x for x in [p.get("body") or ""] + [f"{a['t']:.1f}s {a['state']}" for a in p.get("arc") or []] if x)
-        kind = route_kind(p, (r.get("base") or {}).get("label", ""))
+        from .dance import move_of
+
+        kind = "drive" if move_of(r) else route_kind(p, (r.get("base") or {}).get("label", ""))
         if kind not in kinds:
             kinds.append(kind)
         rows.append([f"#{r['index']}", p.get("who") or "—", emo, p.get("face") or "—", moves or "—", p.get("voice") or "—", ROUTE_ZH[kind]])

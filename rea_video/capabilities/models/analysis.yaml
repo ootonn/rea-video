@@ -239,6 +239,62 @@ models:
     verified: {date: 2026-10-29, basis: third-party}
     confidence: medium
 
+  - id: video-depth-anything
+    name: Video Depth Anything
+    vendor: ByteDance（开源）
+    category: analysis
+    release: 2025-01
+    status: ga
+    access: [open-weights]
+    primitives: [analyze.depth_video]
+    strengths:
+      - 长视频深度估计，帧间稳定，不像逐帧深度那样闪
+      - 有 Small / Base / Large 三档，Small 消费级显卡就能跑
+    weaknesses:
+      - 快速转身、手部交叠和遮挡处仍可能缺肢体，出驱动前要整段看一遍
+    license: {commercial: conditional, note: Small 为 Apache 2.0；Base / Large 为 CC BY-NC 4.0，不能商用}
+    sources:
+      - https://github.com/DepthAnything/Video-Depth-Anything
+      - https://aiidelist.com/blog/remake-viral-video-codex-depth-maps-minimax-h3
+    verified: {date: 2026-11-14, basis: third-party}
+    confidence: medium
+    notes: 深度驱动复刻的做法见 aiidelist 的流程：原片转灰度深度视频，再和角色设定图一起交给视频模型
+
+  - id: dwpose
+    name: DWPose
+    vendor: IDEA Research（开源）
+    category: analysis
+    release: 2023-07
+    status: ga
+    access: [open-weights]
+    primitives: [analyze.pose_track]
+    strengths:
+      - 全身含手指和脸部关键点；ComfyUI 的 controlnet_aux 有现成节点，出骨骼视频接 Wan VACE
+    weaknesses:
+      - 只有 2D 关键点，转身和前后遮挡时左右容易翻
+    license: {commercial: true, note: Apache 2.0}
+    sources:
+      - https://github.com/IDEA-Research/DWPose
+    verified: {date: 2026-11-14, basis: knowledge}
+    confidence: medium
+
+  - id: rokoko-vision
+    name: Rokoko Vision 3.0
+    vendor: Rokoko
+    category: analysis
+    status: ga
+    access: [app]
+    primitives: [analyze.body_mocap]
+    strengths:
+      - 上传一段视频就出清理过的 3D 动作，导出 FBX / BVH（HIK、Mixamo 骨架），能直接进 Blender
+    weaknesses:
+      - 免费额度很少；BVH 导出要付费档
+    license: {commercial: conditional, note: 以平台条款为准}
+    sources:
+      - https://rokoko.com/products/video
+    verified: {date: 2026-11-14, basis: vendor}
+    confidence: medium
+
   - id: megasam
     name: MegaSaM
     vendor: 学术开源（CVPR 2025）

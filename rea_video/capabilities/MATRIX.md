@@ -14,6 +14,9 @@
 | `analyze.camera_motion` | 相机运动反解 | ◐ `megasam` |
 | `analyze.audio_separation` | 音频分轨 | ● `demucs` |
 | `analyze.beat_tempo` | 节拍与段落分析 | ◐ `librosa-madmom` |
+| `analyze.depth_video` | 视频深度估计 | ◐ `video-depth-anything` |
+| `analyze.pose_track` | 人体骨骼跟踪 | ◐ `dwpose` |
+| `analyze.body_mocap` | 单目视频动捕 | ◐ `rokoko-vision` |
 | `analyze.image_layer_decompose` | 单帧图层分解 | ◐ `seedream-5.0`、◐ `seedream-5.5` |
 | `image.t2i` | 文生图 | ◐ `flux-3`、◐ `flux-3-klein`、● `gpt-image-2.5`、◐ `gpt-image-2.6`、◐ `grok-imagine-image-2.0`、○ `ideogram-4.5`、◐ `kling-o3-image`、◐ `mai-image-2.6`、○ `midjourney-v8.2`、◐ `minimax-h3-image`、◐ `nano-banana-2-lite`、◐ `nano-banana-2.1`、◐ `qwen-image-2.1`、◐ `qwen-image-3.0`、◐ `qwen-image-3.0-pro`、◐ `seedream-5.0`、◐ `seedream-5.5` |
 | `image.edit_multi_ref` | 多参考图像编辑/合成 | ◐ `flux-3`、◐ `flux-3-klein`、● `gpt-image-2.5`、◐ `gpt-image-2.6`、◐ `grok-imagine-image-2.0`、○ `ideogram-4.5`、◐ `kling-o3-image`、◐ `mai-image-2.6`、○ `midjourney-v8.2`、◐ `minimax-h3-image`、◐ `nano-banana-2.1`、◐ `qwen-image-2.1`、◐ `qwen-image-3.0`、◐ `qwen-image-3.0-pro`、◐ `seedream-5.0`、◐ `seedream-5.5` |
@@ -21,7 +24,7 @@
 | `image.storyboard_series` | 分镜组图 | ◐ `kling-o3-image`、◐ `seedream-5.0` |
 | `image.tryon` | 虚拟试穿 | ◐ `fashn-tryon-max`、◐ `fashn-v1.6`、◐ `kling-kolors-tryon`、◐ `kling-virtual-tryon-3`、◐ `qwen-image-2.1` |
 | `video.t2v` | 文生视频 | ◐ `flux-3-video`、○ `flux-3-video-max`、◐ `gemini-omni-flash`、◐ `grok-imagine-video-1.5`、○ `grok-imagine-video-1.5-lite`、◐ `hailuo-2.3`、○ `happyhorse-1.0`、◐ `heygen-video-1`、◐ `hunyuanvideo-1.5`、◐ `kling-3.0`、◐ `kling-4.0`、◐ `kling-4.0-flash`、◐ `kling-o3`、◐ `ltx-2.5`、○ `luma-ray3.2`、◐ `minimax-h3`、◐ `minimax-h3-max`、○ `p-video-2-pro`、◐ `pika-h3-flex`、◐ `pixverse-v6`、◐ `runway-gen-4.5`、◐ `seedance-2.0`、● `seedance-2.5`、○ `seedance-2.5-flash`、○ `skyreels-v4`、○ `utopai-x`、◐ `veo-3.1`、◐ `vidu-q3`、● `wan-2.2`、◐ `wan-3.0` |
-| `video.i2v_first_frame` | 图生视频（首帧） | ◐ `flux-3-video`、○ `flux-3-video-max`、◐ `gemini-omni-flash`、◐ `grok-imagine-video-1.5`、○ `grok-imagine-video-1.5-lite`、◐ `hailuo-2.3`、○ `happyhorse-1.0`、◐ `heygen-video-1`、◐ `hunyuanvideo-1.5`、◐ `kling-3.0`、◐ `kling-4.0`、◐ `kling-4.0-flash`、◐ `kling-o3`、◐ `ltx-2.5`、○ `luma-ray3.2`、◐ `minimax-h3`、◐ `minimax-h3-max`、○ `p-video-2-pro`、◐ `pika-h3-flex`、◐ `pixverse-v6`、◐ `runway-gen-4.5`、◐ `seedance-2.0`、● `seedance-2.5`、○ `seedance-2.5-flash`、○ `skyreels-v4`、◐ `veo-3.1`、◐ `vidu-q3`、◐ `vidu-q4-preview`、● `wan-2.2`、◐ `wan-3.0` |
+| `video.i2v_first_frame` | 图生视频（首帧） | ◐ `flux-3-video`、○ `flux-3-video-max`、◐ `gemini-omni-flash`、◐ `grok-imagine-video-1.5`、○ `grok-imagine-video-1.5-lite`、◐ `hailuo-2.3`、○ `happyhorse-1.0`、◐ `heygen-video-1`、◐ `hunyuanvideo-1.5`、◐ `kling-3.0`、◐ `kling-4.0`、◐ `kling-4.0-flash`、◐ `kling-o3`、◐ `ltx-2.5`、○ `luma-ray3.2`、◐ `minimax-h3`、◐ `minimax-h3-max`、○ `p-video-2-pro`、◐ `pika-h3-flex`、◐ `pixverse-v6`、◐ `runway-gen-4.5`、◐ `seedance-2.0`、● `seedance-2.5`、○ `seedance-2.5-flash`、○ `skyreels-v4`、◐ `veo-3.1`、◐ `vidu-q3`、◐ `vidu-q4-preview`、● `wan-2.2`、◐ `wan-3.0`、◐ `wan-vace` |
 | `video.i2v_first_last` | 首尾帧生成 | ◐ `flux-3-video`、○ `flux-3-video-max`、◐ `gemini-omni-flash`、◐ `grok-imagine-video-1.5`、◐ `heygen-video-1`、◐ `kling-3.0`、◐ `kling-4.0`、◐ `kling-o3`、◐ `minimax-h3`、◐ `minimax-h3-max`、○ `p-video-2-pro`、◐ `pika-h3-flex`、◐ `pixverse-v6`、◐ `seedance-2.0`、● `seedance-2.5`、○ `seedance-2.5-flash`、◐ `veo-3.1`、◐ `wan-3.0` |
 | `video.keyframes` | 多关键帧控制 | ◐ `flux-3-video`、○ `flux-3-video-max`、◐ `grok-imagine-video-1.5`、◐ `kling-4.0`、◐ `runway-gen-4.5` |
 | `video.multi_reference` | 多参考生视频（主体一致） | ◐ `gemini-omni-flash`、◐ `grok-imagine-video-1.5`、○ `happyhorse-1.0`、◐ `heygen-video-1`、◐ `kling-3.0`、◐ `kling-4.0`、◐ `kling-4.0-flash`、◐ `kling-o3`、◐ `minimax-h3`、◐ `minimax-h3-max`、◐ `pika-h3-flex`、◐ `pixverse-v6`、◐ `seedance-2.0`、● `seedance-2.5`、○ `seedance-2.5-flash`、◐ `veo-3.1`、◐ `vidu-q3`、◐ `vidu-q4-preview`、◐ `wan-3.0` |
@@ -29,9 +32,10 @@
 | `video.reference_audio` | 参考音频生成 | ◐ `grok-imagine-video-1.5`、◐ `heygen-video-1`、◐ `kling-4.0-flash`、◐ `ltx-2.5`、◐ `minimax-h3-max`、◐ `pika-h3-flex`、◐ `seedance-2.0`、● `seedance-2.5`、○ `seedance-2.5-flash`、◐ `vidu-q4-preview`、◐ `wan-3.0` |
 | `video.multi_shot` | 单次多镜头 | ◐ `flux-3-video`、◐ `gemini-omni-flash`、◐ `kling-3.0`、◐ `kling-4.0`、◐ `kling-4.0-flash`、◐ `kling-o3`、◐ `ltx-2.5`、◐ `minimax-h3`、◐ `pika-h3-flex`、◐ `pixverse-v6`、◐ `seedance-2.0`、● `seedance-2.5`、◐ `veo-3.1`、◐ `vidu-q4-preview`、◐ `wan-3.0` |
 | `video.extend` | 续写延长 | ◐ `flux-3-video`、◐ `gemini-omni-flash`、● `seedance-2.5`、◐ `veo-3.1` |
-| `video.edit_v2v` | 视频编辑（保留运动） | ◐ `flux-3-video`、◐ `gemini-omni-flash`、○ `happyhorse-1.0`、○ `higgsfield-genjutsu`、◐ `kling-4.0`、◐ `kling-o3`、◐ `ltx-2.5`、○ `luma-ray3.2`、◐ `pika-h3-flex`、○ `runway-aleph-2`、◐ `runway-gen-4.5`、◐ `seedance-2.0`、● `seedance-2.5`、○ `skyreels-v4`、◐ `viggle-animate`、◐ `wan-2.2-animate`、○ `wan-2.7-edit` |
+| `video.edit_v2v` | 视频编辑（保留运动） | ◐ `flux-3-video`、◐ `gemini-omni-flash`、○ `happyhorse-1.0`、○ `higgsfield-genjutsu`、◐ `kling-4.0`、◐ `kling-o3`、◐ `ltx-2.5`、○ `luma-ray3.2`、◐ `pika-h3-flex`、○ `runway-aleph-2`、◐ `runway-gen-4.5`、◐ `seedance-2.0`、● `seedance-2.5`、○ `skyreels-v4`、◐ `viggle-animate`、◐ `wan-2.2-animate`、○ `wan-2.7-edit`、◐ `wan-vace` |
 | `video.camera_control` | 运镜与镜头参数控制 | ◐ `gemini-omni-flash`、◐ `kling-3.0`、◐ `kling-4.0`、◐ `pixverse-v6`、○ `runway-aleph-2`、◐ `runway-gen-4.5`、● `seedance-2.5` |
 | `video.native_audio` | 音画同出 | ◐ `flux-3-video`、○ `flux-3-video-max`、◐ `gemini-omni-flash`、◐ `grok-imagine-video-1.5`、○ `grok-imagine-video-1.5-lite`、◐ `heygen-video-1`、◐ `kling-3.0`、◐ `kling-4.0`、◐ `kling-4.0-flash`、◐ `ltx-2.5`、○ `luma-ray3.2`、◐ `minimax-h3`、◐ `minimax-h3-max`、○ `p-video-2-pro`、◐ `pika-h3-flex`、◐ `pixverse-v6`、◐ `runway-gen-4.5`、◐ `seedance-2.0`、● `seedance-2.5`、○ `seedance-2.5-flash`、○ `skyreels-v4`、○ `utopai-x`、◐ `veo-3.1`、◐ `vidu-q3`、◐ `vidu-q4-preview`、◐ `wan-3.0` |
+| `video.control_video` | 控制视频驱动生成 | ◐ `wan-vace` |
 | `motion.transfer` | 动作迁移 | ○ `dreamactor-m2.0`、○ `higgsfield-genjutsu`、◐ `kling-motion-control`、◐ `runway-gen-4.5`、◐ `viggle-animate`、◐ `viggle-v4`、◐ `wan-2.2-animate`、◐ `wan-animate-2` |
 | `avatar.audio_driven` | 音频驱动数字人 | ○ `creatify-aurora`、○ `hedra-omnia`、◐ `heygen-avatar-v`、◐ `kling-avatar-v2`、◐ `longcat-video-avatar-1.5`、◐ `ltx-2.3-lipsync`、◐ `ltx-2.5`、◐ `mirage-avatar-x`、◐ `omnihuman-2.0`、◐ `sync-3`、◐ `synthesia-express-3`、○ `veed-fabric-1.0` |
 | `lipsync.redub` | 口型重配 | ◐ `heygen-avatar-v`、◐ `sync-3`、◐ `sync-react-1` |
@@ -55,6 +59,7 @@
 |---|---|---|---|---|---|---|---|
 | Demucs（htdemucs） | Meta（开源） | analysis | ga |  |  | 是 | knowledge 2026-10-29 |
 | Doubao Seed 2.0 Pro（豆包） | ByteDance | analysis | ga |  |  | 是 | third-party 2026-10-29 |
+| DWPose | IDEA Research（开源） | analysis | ga |  |  | 是 | knowledge 2026-11-14 |
 | FunASR / SenseVoice | Alibaba（开源） | analysis | ga |  |  | 有条件 | knowledge 2026-10-29 |
 | Gemini 3.1 Pro | Google | analysis | ga | 10800 |  | 是 | third-party 2026-10-29 |
 | Gemini 3.5 Flash | Google | analysis | ga | 10800 |  | 是 | third-party 2026-10-29 |
@@ -66,8 +71,10 @@
 | PySceneDetect | 开源 | analysis | ga |  |  | 是 | knowledge 2026-10-29 |
 | Qwen3.5 397B-A17B（开源） | Alibaba | analysis | ga |  |  | 有条件 | third-party 2026-10-29 |
 | RobustVideoMatting（RVM） | 开源 | analysis | ga |  |  | 有条件 | knowledge 2026-10-29 |
+| Rokoko Vision 3.0 | Rokoko | analysis | ga |  |  | 有条件 | vendor 2026-11-14 |
 | SAM 系列（SAM 2 / SAM 3） | Meta（开源） | analysis | ga |  |  | 有条件 | knowledge 2026-10-29 |
 | TransNetV2 | 开源 | analysis | ga |  |  | 是 | knowledge 2026-10-29 |
+| Video Depth Anything | ByteDance（开源） | analysis | ga |  |  | 有条件 | third-party 2026-11-14 |
 | 火山引擎人像视频抠像 | ByteDance | analysis | ga |  |  | 是 | third-party 2026-10-29 |
 | WhisperX | 开源 | analysis | ga |  |  | 是 | knowledge 2026-10-29 |
 | CosyVoice 3（开源）/ 百炼 CosyVoice v3.5 | Alibaba | audio | ga |  |  | 有条件 | third-party 2026-10-29 |
@@ -169,3 +176,4 @@
 | Wan 2.2（开源，含 TI2V-5B） | Alibaba | video | ga |  | 否 | 是 | third-party 2026-10-29 |
 | Wan 2.7 视频编辑 | Alibaba | video | ga |  |  | 是 | third-party 2026-10-29 |
 | Wan 3.0（万相） | Alibaba | video | ga | 30 | 是 | 是 | vendor 2026-11-12 |
+| Wan VACE（Wan 2.1 VACE / Wan2.2-VACE-Fun） | Alibaba | video | ga |  | 否 | 是 | third-party 2026-11-14 |

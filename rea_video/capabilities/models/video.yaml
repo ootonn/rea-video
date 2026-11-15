@@ -691,6 +691,29 @@ models:
     verified: {date: 2026-10-29, basis: third-party}
     confidence: high
 
+  - id: wan-vace
+    name: Wan VACE（Wan 2.1 VACE / Wan2.2-VACE-Fun）
+    vendor: Alibaba
+    category: video
+    release: 2025-05
+    status: ga
+    access: [open-weights]
+    primitives: [video.control_video, video.edit_v2v, video.i2v_first_frame]
+    limits:
+      resolutions: [480p, 720p]
+    audio: {native: false}
+    strengths:
+      - 深度、骨骼、线稿视频都能当控制输入，加一张参考图给角色外观；ComfyUI 有现成的舞蹈动作迁移工作流
+      - 开源可本地跑，参数（控制强度、分段）全可调
+    weaknesses:
+      - 要自己搭 ComfyUI 和显卡；长段要分段生成再拼
+    license: {commercial: true, note: Apache 2.0}
+    sources:
+      - https://github.com/ali-vilab/VACE
+      - https://www.runcomfy.com/comfyui-workflows/wan-2-2-vace-in-comfyui-pose-driven-motion-video-workflow
+    verified: {date: 2026-11-14, basis: third-party}
+    confidence: medium
+
   - id: ltx-2.5
     name: LTX-2.5（开源）
     vendor: Lightricks

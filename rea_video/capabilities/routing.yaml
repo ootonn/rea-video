@@ -45,6 +45,7 @@ segmentation:
   defaults:
     generation_unit_s: {min: 4, max: 15}
     multishot_hardcut_s: {prefer: 8, max: 10}   # S06：单个生成单元内连续硬切的时长
+    motion_segment_s: {prefer: 10, max: 15, min: 3}   # 动作驱动视频每段的长度：在停顿处切，短段手脚更稳
     same_scene_distance: 0.5                    # 相邻镜头首尾帧颜色分布距离（Bhattacharyya）低于它算同一场景
   rules:
     - id: S01-merge-multishot
@@ -94,11 +95,12 @@ rules:
   - id: R04-precise-motion
     layer: base
     when: [precise_motion]
-    route: [motion.transfer, video.reference_video, video.edit_v2v]
-    prefer: [kling-motion-control, wan-2.2-animate, wan-animate-2, seedance-2.5, kling-o3, runway-gen-4.5]
+    route: [motion.transfer, video.reference_video, analyze.depth_video, analyze.pose_track, video.control_video, analyze.body_mocap, render.3d_scene]
+    prefer: [kling-motion-control, seedance-2.5, wan-2.2-animate, wan-animate-2, video-depth-anything, dwpose, wan-vace, rokoko-vision, blender]
     verify: [motion_trajectory_error, identity_consistency, beat_alignment]
-    why: 动作的时间行为无法用文字和静帧描述
-    guard: 参考视频先当证据；只有当时间行为本身就是看点时，才把片段作为模型输入。驱动视频必须有权使用
+    why: 动作的时间行为无法用文字和静帧描述；首尾帧只锁两端，中间的编舞全靠模型猜
+    alternatives: 原片人物的外观或体型被带出来时，改用深度视频（换人换景、保留运镜）或骨骼视频（目标体型差很多）当驱动；要改机位或反复用这套动作时，单目动捕转白模，在 Blender 里重设机位渲染，再用白模参考生成
+    guard: 驱动视频先擦掉字幕、贴纸（会被当成画面的一部分学进去），按停顿切成短段（手脚和转身在短段里更稳）；用别人的舞蹈视频驱动要注意肖像权与版权
 
   - id: R05-garment
     layer: base

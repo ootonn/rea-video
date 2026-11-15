@@ -13,7 +13,7 @@ from . import aspects, narrative, performance
 from .narrative import ROLE_GUIDE
 from .vlm import SHOT_PROMPT, shot_hints
 
-PERF_TEMPLATE = {"who": "", "emotion": "", "intensity": "", "face": "", "body": "", "arc": [], "voice": "", "key": False, "en": ""}
+PERF_TEMPLATE = {"who": "", "emotion": "", "intensity": "", "face": "", "body": "", "arc": [], "voice": "", "key": False, "move": "", "movers": 0, "full_body": None, "backdrop": "", "en": ""}
 SHOOT_LIKE = ("live_action", "avatar", "stop_motion", "film_footage")  # shots where "how was it shot / lit" applies
 AGENT_WEIGHT = 0.85  # agent answers are softened toward uniform before fusion
 IMAGE_SOURCES = ("ai_image", "photo", "graphic", "screenshot", "unknown")
@@ -145,6 +145,10 @@ def build_tasks(breakdown: dict, out_dir: str) -> tuple[dict, dict]:
         past = hint_for(dl, pats)
         if past:
             prio, why = "high", why + [past]
+        from .dance import maybe_motion, move_of
+
+        if maybe_motion(rec, breakdown) and not move_of(rec):
+            why = why + ["长镜头、动作量大、有配乐少台词：如果大幅度的全身动作本身是看点（舞蹈、打斗、健身），填 performance.move / movers / full_body / backdrop"]
         shoot_like = any(l in SHOOT_LIKE for l, _ in ranked[:2])
         shots.append({
             "id": rec["id"], "index": rec["index"], "start": rec["start"], "end": rec["end"], "duration": rec["duration"],

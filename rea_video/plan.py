@@ -289,11 +289,19 @@ class Planner:
 
     def plan_shot(self, label: str, shot: dict, video: dict, engine: str = "seedance2.0") -> dict:
         rule_id, executor, gen_type = LABEL_ROUTE.get(label, ("R14-ambient-broll", "capsule_cinema", "text_to_video"))
+        from .dance import move_of
+
+        moved = move_of({**shot, "base": {"label": label}})
+        if moved:  # the moves are the point: driven from the source clip; capsule-cinema keeps the original until then
+            rule_id, executor, gen_type = "R04-precise-motion", "motion_drive", None
         rule = self.rules.get(rule_id, {})
         candidates = [{"id": m, "name": model_name(self.models[m]["name"]), "status": self.models[m]["status"]}
                       for m in rule.get("prefer", []) if m in self.models and self.models[m]["status"] != "shutdown"]
         plan = {"label": label, "rule": rule_id, "route": rule.get("route", []), "candidates": candidates,
-                "verify": rule.get("verify", []), "executor": executor, "note": NOTE.get(label, "")}
+                "verify": rule.get("verify", []), "executor": executor,
+                "note": T("动作是看点：用原片这段当动作驱动（`rea-video drive` 出驱动视频，见复刻方案「动作驱动」），不用首尾帧生成",
+                          "the moves are the point: drive them from this stretch of the source (`rea-video drive` writes the drive clips, see “Motion drive” "
+                          "in the remake plan) instead of first / last frame generation") if moved else NOTE.get(label, "")}
         dur = float(shot["duration"])
         mat = shot.get("material") or {}
         user_assets = []

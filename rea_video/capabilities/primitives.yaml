@@ -87,6 +87,28 @@ primitives:
     inputs: [audio]
     output: beat_grid
     use_when: 音乐卡点视频；给剪辑节奏提供节拍锚点
+  - id: analyze.depth_video
+    group: analyze
+    name: 视频深度估计
+    inputs: [video]
+    output: video
+    use_when: 舞蹈、打斗等动作镜头复刻：把原片转成灰度深度视频当驱动，保留动作、走位、空间和运镜，去掉原来的人长什么样、穿什么
+    metrics: [motion_trajectory_error]
+    probe: 快速转身、手部交叠、多人遮挡片段的逐帧闪烁和肢体缺失
+  - id: analyze.pose_track
+    group: analyze
+    name: 人体骨骼跟踪
+    inputs: [video]
+    output: keypoints
+    use_when: 目标角色和原舞者体型差很多（Q 版、动物、卡通）时，用骨骼而不是深度当驱动，体型不会被带过去
+    metrics: [motion_trajectory_error]
+  - id: analyze.body_mocap
+    group: analyze
+    name: 单目视频动捕
+    inputs: [video]
+    output: animation
+    use_when: 动作要改机位、反复用或在 3D 里改时，把原片动作转成 FBX / BVH，绑到白模上重新渲染
+    metrics: [motion_trajectory_error]
   - id: analyze.image_layer_decompose
     group: analyze
     name: 单帧图层分解
@@ -219,6 +241,13 @@ primitives:
     metrics: [lip_sync, speech_wer]
 
   # ===== 人物驱动 =====
+  - id: video.control_video
+    group: video
+    name: 控制视频驱动生成
+    inputs: [video, image, text]
+    output: video
+    use_when: 用深度、骨骼或线稿视频逐帧锁住动作和结构，参考图给角色外观（舞蹈、打斗的本地开源流程）
+    metrics: [motion_trajectory_error, identity_consistency]
   - id: motion.transfer
     group: character
     name: 动作迁移
