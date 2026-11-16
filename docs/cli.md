@@ -75,7 +75,8 @@ rea-video stems ref.mp4 -o out/ref
 
 ```bash
 CC=~/code/github/capsule-cinema   # capsule-cinema 仓库；也可以设 CAPSULE_CINEMA_ROOT，或 rea-video prefs capsule_root $CC 设一次，之后不用再带 --capsule-root
-rea-video remake-plan out/ref/breakdown.json --capsule-root $CC                  # AI 类镜头 → 首尾帧生成任务
+rea-video plan out/ref --model seedance-2.5                                      # 按 remake/intent.yaml 和模型出复刻方案（报告第二部分）并检查
+rea-video remake-plan out/ref/breakdown.json --capsule-root $CC                  # 方案里的生成单元 → 生成任务（检查有错误时不出）
 rea-video remake-run out/ref/remake/jobs.json                                    # 调 capsule-cinema 生成（会计费，可先 --dry-run）
 rea-video assemble out/ref/breakdown.json out/ref/remake/results.json            # 按原时间线拼回 + 对比片；加 --overlays 把字幕和花字叠回换掉的镜头
 rea-video capsule-draft out/ref/breakdown.json --capsule-root $CC --capsule-name my_remake
@@ -83,7 +84,7 @@ rea-video capsule-draft out/ref/breakdown.json --capsule-root $CC --capsule-name
 
 - 静态图推拉和静帧：不调模型，本地用测得的缩放和平移参数精确重建。
 - 代码渲染和录屏：报告给出文字轨和版式，用 Remotion 重建。
-- 字幕、花字、贴纸：不进生成提示词。参考帧上带着原字幕的镜头，`remake-plan` 会提醒先擦掉；生成完用 `assemble --overlays` 叠回。
+- 字幕、花字、贴纸：不进生成提示词。从原片取的参考（参考视频、关键帧、首尾帧）都擦掉了字；生成完用 `assemble --overlays` 叠回。
 - `capsule-draft`：通过 capsule-cinema 自带的 `tool_factory` 注入拆解结果，生成可复用的配方草稿，不需要改 capsule-cinema 的代码。
 
 见 [capsule-cinema.md](capsule-cinema.md)。
@@ -110,9 +111,10 @@ rea-video capsule-draft out/ref/breakdown.json --capsule-root $CC --capsule-name
 | `drive OUT_DIR --join [RESULTS]` | 把生成好的段（默认 `drive/results.json`：`{"seg_01": 路径}`）按段长对齐、拼起来、按镜头切开，写进 `remake/mine.json`，再跑 `remake` 出对比片 |
 | `eval labels.yaml` | 在带标注的样本上评测准确率和切点 F1 |
 | `capsule breakdown.json` | 导出 capsule-cinema 的视频分析 JSON |
-| `models [ID] [--plan OUT_DIR]` | 列出能力地图里的生成模型；带 id 时打印这个模型的提示词写法和关键帧要求（`models keyframes` 是关键帧通用做法）；`--plan` 把已有拆解的复刻方案改按该模型重出 |
-| `remake-plan` / `assemble` | 生成复刻任务、拼回成片 |
-| `remake-run JOBS [--dry-run] [--only 2,5\|shot_002] [--capsule-root]` | 用 capsule-cinema 执行复刻任务（会计费）；有镜头没生成出视频时退出码非 0 |
+| `models [ID]` | 列出能力地图里的生成模型；带 id 时打印这个模型的提示词写法和关键帧要求（`models keyframes` 是关键帧通用做法）；`~/.rea-video/capabilities/models/*.yaml` 里补充的模型也会列出 |
+| `plan OUT_DIR [--model ID] [--generate ai\|all]` | 按复刻意图 `remake/intent.yaml`（模型、整条重做还是只做 AI 镜头、换什么）出报告第二部分：生成单元、每次喂什么、提示词草稿和方案检查；`remake/prompts.json` 里按模型写好的最终提示词会做格式检查；拆解结果不变 |
+| `remake-plan` / `assemble` | 把方案里的生成单元写成任务、拼回成片 |
+| `remake-run JOBS [--dry-run] [--only G2\|2,5\|shot_002] [--capsule-root]` | 用 capsule-cinema 执行复刻任务（会计费）；有任务没生成出视频时退出码非 0 |
 | `capsule-draft breakdown.json` | 生成 capsule-cinema 胶囊草稿 |
 
 ## 工作流（设计目标；目前完成到拆解和 AI 镜头复刻）

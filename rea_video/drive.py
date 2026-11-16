@@ -42,15 +42,31 @@ def _ff(args: list[str]) -> None:
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-nostdin", *args], check=True)
 
 
-def overlays(b: dict) -> list[dict]:
+def overlays(b: dict, persistent: bool = False) -> list[dict]:
     """Post-production boxes to erase: subtitles, titles and styled text read steadily, and stickers laid on top
-    (text that is part of the picture, labels on things, one-off reads and stickers marked as in the picture stay)."""
+    (text that is part of the picture, labels on things, one-off reads and stickers marked as in the picture stay).
+    persistent=True also erases text that sits unchanged across cuts (disclaimers, licence numbers, corner titles):
+    laid on in the edit, never part of a scene, and a reference clip should not carry it."""
     from .classify import _same_words
 
     pk = b.get("packaging") or {}
+    cuts = [r["start"] for r in (b.get("shots") or [])[1:]]
+
+    def laid_on(c: dict) -> bool:
+        """Text that holds still through a cut of the source, or sits on the frame's edge: added in the edit, not
+        filmed or generated (product lettering moves with the product and changes between shots)."""
+        if c.get("follows"):
+            return False
+        x, y, w, h = c["bbox"]
+        if h > 0.1:  # lettering this tall is on a thing in the shot (a product held up to the camera), not a caption line
+            return False
+        edge = y + h > 0.93 or x < 0.04 or x + w > 0.96
+        crosses = any(c["t0"] + 0.2 < t < c["t1"] - 0.2 for t in cuts)
+        return bool(c.get("persistent")) or crosses or edge
+
     out = []
     for c in pk.get("text_cues") or []:
-        if c.get("part_of_picture") or c.get("kind") not in ERASE_KINDS or not c.get("bbox"):
+        if c.get("part_of_picture") or not c.get("bbox") or (c.get("kind") not in ERASE_KINDS and not (persistent and laid_on(c))):
             continue
         if int(c.get("samples") or 0) < MIN_SAMPLES:
             continue  # a flicker read: printing on a dancer's clothes, caught for a frame or two as it turns past
@@ -217,9 +233,9 @@ def _write_depth(model, frames: list[np.ndarray], path: Path, fps: float) -> Non
     enc.wait()
 
 
-def _encoder(path: Path, w: int, h: int, fps: float):
+def _encoder(path: Path, w: int, h: int, fps: float, crf: int = 18):
     return subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{w}x{h}", "-r", f"{fps:.4f}",
-                             "-i", "-", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", str(path)], stdin=subprocess.PIPE)
+                             "-i", "-", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", str(crf), str(path)], stdin=subprocess.PIPE)
 
 
 def _sheet(rows: list[list[np.ndarray]], labels: list[str], path: Path) -> None:
@@ -233,6 +249,41 @@ def _sheet(rows: list[list[np.ndarray]], labels: list[str], path: Path) -> None:
         lines.append(row)
     w = max(r.shape[1] for r in lines)
     write_image(path, np.concatenate([np.pad(r, ((0, 0), (0, w - r.shape[1]), (0, 0))) for r in lines], axis=0))
+
+
+def clean_clip(b: dict, ranges: list[list[float]], path: Path, width: int = 720, crf: int = 26) -> Path:
+    """The source over `ranges` (joined when there are several) with subtitles, styled text and stickers erased and no
+    sound: a reference video for a remix, so the model takes the shots and pacing but not the old words."""
+    src = Path(b["source"]["path"])
+    info = video_info(src)
+    boxes = overlays(b, persistent=True)
+    w, h = scaled_size(info, min(width, info.width or width))
+    fps = info.fps if 0 < info.fps <= 60 else 30.0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # small: the clip travels inside the request (base64) and only has to show shots, camera and pacing
+    enc = _encoder(path, w, h, fps, crf=crf)
+    try:
+        for a, z in ranges:
+            for i, f in enumerate(iter_frames(src, info, w, start=a, duration=z - a, fps=fps)):
+                t = a + i / fps
+                enc.stdin.write(erase(f, _mask(boxes, t, f.shape[1], f.shape[0]) if boxes else None).tobytes())
+    finally:
+        enc.stdin.close()
+        enc.wait()
+    return path
+
+
+def clean_frame(b: dict, t: float, path: Path, width: int = 1080) -> Path:
+    """One source frame at t with the edit's text erased: a composition reference for a model without reference video."""
+    src = Path(b["source"]["path"])
+    info = video_info(src)
+    boxes = overlays(b, persistent=True)
+    w, _ = scaled_size(info, min(width, info.width or width))
+    for f in iter_frames(src, info, w, start=t, duration=0.1):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_image(path, erase(f, _mask(boxes, t, f.shape[1], f.shape[0]) if boxes else None))
+        break
+    return path
 
 
 def drive(out: Path, shots: list[int] | None = None, depth: bool = False, clean: bool = True,

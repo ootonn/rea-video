@@ -32,7 +32,8 @@ PREF_KEYS = {
     "lang": "报告和结论的语言：zh（默认）/ en；agent 应按用户提问的语言选，用户明确指定时以指定为准",
 }
 ON_OFF = ("on", "off")
-HINT_MIN = 2  # a correction pattern becomes a hint once it has been seen this many times
+HINT_MIN = 2  # a correction pattern becomes a hint once it has been seen this many times, in this many different videos
+# (one video corrected shot by shot says something about that video, not about the tool)
 
 
 def home() -> Path:
@@ -225,7 +226,7 @@ def patterns(corrections: list[dict] | None = None) -> list[dict]:
 
 
 def hint_for(tool_label: str, pats: list[dict]) -> str | None:
-    hits = [p for p in pats if p["tool"] == tool_label and p["count"] >= HINT_MIN]
+    hits = [p for p in pats if p["tool"] == tool_label and p["count"] >= HINT_MIN and p.get("videos", HINT_MIN) >= HINT_MIN]
     if not hits:
         return None
     return semi().join(T("用户过去 {n} 次把工具判的「{a}」改成「{b}」", "users have changed the tool's \"{a}\" to \"{b}\" {n} times before",

@@ -410,7 +410,9 @@ def _advice(diffs: list[dict]) -> list[str]:
     elif ca > 0:
         r = cb / ca
         if max(r, 1 / r) >= OFF_RATIO:
-            tips.append((max(r, 1 / r) / OFF_RATIO, T(f"画上去的量是原片的 {r:.1f} 倍", f"{r:.1f}x as much drawn as the original")))
+            tips.append((max(r, 1 / r) / OFF_RATIO,
+                         T(f"画出来的只有原片的 {r:.0%}，有元素漏画或太小", f"only {r:.0%} as much drawn as the original: elements missing or too small") if r < 1 else
+                         T(f"画出来的是原片的 {r:.1f} 倍，多画了或画得太大", f"{r:.1f}x as much drawn as the original: extra or oversized elements")))
     for key, zh, en in (("colour", "前景颜色", "drawn colour"), ("ground", "底色", "ground")):
         cs = [d[key] for d in diffs if key in d]
         if not cs:

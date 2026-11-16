@@ -563,8 +563,10 @@ def merge_audio_with_vlm(audio: dict, whole: dict | None) -> dict:
     return {"sfx_merged": sfx[:300], "plan": plan, "mix": whole.get("mix", "")}
 
 
-def refine_with_stems(audio: dict, vocals_wav: str) -> dict:
-    """Re-measure the vocal style on the separated dry vocals (no BGM underneath, so pitch tracking is clean)."""
+def refine_with_stems(audio: dict, vocals_wav: str, repetition: bool = True) -> dict:
+    """Re-measure the vocal style on the separated dry vocals (no BGM underneath, so pitch tracking is clean).
+    repetition=False skips the whole-track chorus check: when the voice was found by speech recognition under a
+    score, the stem also carries the score's own singing, and only the transcribed stretches belong to the voice."""
     voice = audio.get("voice") or {}
     segs = voice.get("segments") or []
     if not voice.get("present") or not segs:
@@ -576,7 +578,10 @@ def refine_with_stems(audio: dict, vocals_wav: str) -> dict:
     freqs = np.fft.rfftfreq(N_FFT, 1 / SR)
     beats = np.array((audio.get("music") or {}).get("beats") or [], float)
     st = vocal_style(x, Sh, freqs, segs, beats)
-    if st:
+    if st and not repetition:
+        voice.update(st)
+        voice["style_measured_on"] = "vocals_stem"
+    elif st:
         rep = vocal_repetition(x, freqs)
         st["chorus_repeat_share"] = rep
         if rep > 0.1 and st["style"] == "speech":  # repeated melodic lines = a song (rap included); narration does not repeat

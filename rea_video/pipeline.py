@@ -85,7 +85,7 @@ def decode_fingerprint() -> str:
 
 
 def decompose(video: str | Path, out_dir: str | Path, *, use_vlm: bool = False, whole_vlm: bool = True,
-              ocr: bool = True, workers: int = 3, engine: str = "seedance2.0", max_shots_vlm: int = 60,
+              ocr: bool = True, workers: int = 3, engine: str | None = None, max_shots_vlm: int = 60,
               platform_meta: dict | None = None, stems: bool = True, memory: bool = True, packaging: bool = True, asr: bool = True,
               lang: str = "zh", speakers: bool = True) -> dict:
     lang = set_lang(lang)
@@ -338,6 +338,11 @@ def decompose(video: str | Path, out_dir: str | Path, *, use_vlm: bool = False, 
                          source="vocals_stem" if on_stem else "mix")
         else:
             heard = {"ok": False, "reason": "not_installed"}
+        if heard.get("ok") and speech.settle(heard, audio.setdefault("voice", {}), info.duration, on_stem=on_stem) and on_stem:
+            from .audio import refine_with_stems
+
+            # sung or spoken, measured only where the transcript says someone is heard
+            refine_with_stems(audio, stem_info["vocals"], repetition=False)
     if heard.get("ok") and heard.get("lines"):  # how each line is said, for the script and the voice-over
         from . import prosody
         from .media import extract_audio
@@ -625,7 +630,15 @@ def finalize(breakdown: dict, out: Path, engine: str | None = None) -> dict:
     dance.mark(breakdown)  # speech / singing share and product context per shot, for the motion-drive guard
     out = Path(out)
     set_lang(breakdown.get("lang", "zh"))
-    # remember the engine: apply-review / correct / eval call finalize without one and must not reset it
+    # remember the engine: apply-review / correct / eval call finalize without one and must not reset it.
+    # A model the user named (decompose --engine, prefs engine) goes into the remake intent unless it already names one;
+    # until a model is named, the report's remake part asks for one instead of planning for a model nobody picked
+    if engine:
+        from .generation import load_intent, save_intent
+
+        it = load_intent(out)
+        if not it.get("model"):
+            save_intent(out, {**it, "model": engine})
     engine = breakdown["engine"] = engine or breakdown.get("engine") or "seedance2.0"
     shot_records = breakdown["shots"]
     audio = breakdown.get("audio", {})

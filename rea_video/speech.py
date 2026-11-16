@@ -246,6 +246,8 @@ def transcribe(audio: str | Path, language: str | None = None, threads: int = 2,
                 got = [dict(ln, speaker=who) for ln in got] if who else got
             if emotion:  # SenseVoice hears it per stretch; every sentence cut from the stretch shares it
                 got = [dict(ln, emotion=emotion) for ln in got]
+            if heard:
+                got = [dict(ln, lang=heard) for ln in got]
             lines += got
             if heard:
                 langs.append(heard)
@@ -254,3 +256,65 @@ def transcribe(audio: str | Path, language: str | None = None, threads: int = 2,
         return {"ok": False, "reason": f"{type(exc).__name__}: {str(exc)[:120]}"}
     return {"ok": True, "engine": engine, "language": "bn" if lang == "bn" else (max(set(langs), key=langs.count) if langs else ""),
             "lines": lines}
+
+
+CJK = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
+SCRIPT_OF = {"zh": "han", "yue": "han", "ja": "kana", "ko": "hangul", "en": "latin"}
+
+
+def _size(text: str) -> int:
+    """How much was said: CJK / kana / hangul characters, plus Latin-script words."""
+    return len(CJK.findall(text)) + len(re.findall(r"[A-Za-z\u00c0-\u024f\u0980-\u09ff]+", CJK.sub(" ", text)))
+
+
+def _script(text: str) -> str:
+    if re.search(r"[\u3040-\u30ff]", text):
+        return "kana"
+    if re.search(r"[\uac00-\ud7af]", text):
+        return "hangul"
+    if re.search(r"[\u3400-\u9fff]", text):
+        return "han"
+    return "latin"
+
+
+def settle(heard: dict, voice: dict, duration: float, on_stem: bool = False) -> bool:
+    """Drop what the recognizer guessed and say whether there is speech after all.
+
+    Over music or effects a recognizer still writes something: one syllable, often in another language
+    ("あ。" in an English film, "Okay." over a song). A line of three words or more, written in the video's
+    language, is speech. When enough such lines come back the track has speech even if the signal-level detector
+    missed it (narration mixed under a loud score): voice is then rewritten from the transcript and True is returned.
+    Short lines are kept only when there is speech and they are in its language.
+    The other way round: the signal detector also fires on sounds in the voice band (unboxing, rustling, a crowd).
+    When the recognizer, run on the separated vocal stem, hears not a single word, a spoken voice is not there."""
+    lines = heard.get("lines") or []
+    if not heard.get("ok"):
+        return False
+    if not lines:
+        if on_stem and voice.get("present") and not voice.get("sung"):
+            voice.update(present=False, detected_by="speech_recognition", unheard_ratio=voice.get("ratio"), ratio=0.0,
+                         unheard_segments=voice.get("segments") or [], segments=[])
+        return False
+    scripts = [_script(ln.get("text", "")) for ln in lines]
+    weight: dict[str, int] = {}
+    for ln, sc in zip(lines, scripts):
+        weight[sc] = weight.get(sc, 0) + _size(ln.get("text", ""))
+    main = SCRIPT_OF.get(heard.get("language") or "") or max(weight, key=weight.get)
+
+    def native(sc: str) -> bool:
+        return sc == main or (main == "kana" and sc == "han")  # Japanese lines may be all kanji
+
+    real = [ln for ln, sc in zip(lines, scripts) if _size(ln.get("text", "")) >= 3 and native(sc)]
+    said = sum(ln["end"] - ln["start"] for ln in real)
+    turned = False
+    if not voice.get("present") and len(real) >= 3 and said >= max(8.0, 0.04 * duration):
+        # sentences are talk unless the vocal stem says otherwise (decompose re-measures on these stretches only)
+        voice.update(present=True, ratio=round(said / max(duration, 1e-6), 3),
+                     segments=[[ln["start"], ln["end"]] for ln in real][:80], detected_by="speech_recognition",
+                     style="speech", sung=False, style_measured_on="speech_recognition")
+        turned = True
+    keep = [ln for ln, sc in zip(lines, scripts) if native(sc) or _size(ln.get("text", "")) >= 6] if voice.get("present") else []
+    if len(keep) < len(lines):
+        heard["dropped"] = len(lines) - len(keep)
+        heard["lines"] = keep
+    return turned

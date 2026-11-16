@@ -151,6 +151,12 @@ def main() -> int:
         for k, x in n.items():
             if k == "basis":
                 continue
+            if k == "lint":  # machine-checked format rules for final prompts (rea_video/generation.py lint_prompt)
+                ok = isinstance(x, dict) and set(x) <= {"language", "max_chars", "max_cjk", "require", "forbid"} and all(
+                    isinstance(f, dict) and f.get("re") and f.get("why") for f in x.get("forbid") or [])
+                if not ok:
+                    errors.append(f"prompting.yaml:{mid}: lint 格式不对")
+                continue
             if k in text_keys and not isinstance(x, str) or k in list_keys and not (isinstance(x, list) and all(isinstance(i, str) for i in x)):
                 errors.append(f"prompting.yaml:{mid}: 字段 {k} 类型不对")
             elif k not in text_keys | list_keys:

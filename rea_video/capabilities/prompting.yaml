@@ -59,6 +59,8 @@ models:
       - https://docs.volcengine.com/docs/ark/seedance-portrait-asset-guide?lang=zh
       - https://fal.ai/learn/devs/seedance-2-5-prompting-guide
       - https://runway.com/resources/seedance-2-5-prompt-guide
+    lint:
+      max_cjk: 500
 
   seedance-2.5-flash:
     basis: vendor
@@ -103,6 +105,10 @@ models:
       - https://docs.volcengine.com/docs/82379/2222480
       - https://docs.volcengine.com/docs/ark/seedance-2-0?lang=zh
       - https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh
+    lint:
+      max_cjk: 500
+      forbid:
+        - {re: '镜头\s*\d+\s*[（(]\s*\d|从\s*\d+(\.\d+)?\s*秒起', why: Seedance 2.0 不要给镜头写秒数（官方说精确时间支持不稳定）}
 
   kling-4.0:
     basis: vendor
@@ -364,6 +370,12 @@ models:
       - https://huggingface.co/MiniMaxAI/MiniMax-H3/raw/main/docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md
       - https://platform.minimax.io/docs/api-reference/video-generation-v2-create
       - https://docs.comfy.org/tutorials/video/minimax/minimax-h3-prompt-guide.md
+    lint:
+      language: en
+      max_chars: 7000
+      require: ["overall_soundscape:", "non_diegetic_music:"]
+      forbid:
+        - {re: '\d+(\.\d+)?\s*[-–~]\s*\d+(\.\d+)?\s*s\b', why: 镜头时间要写单个时间点（At 00:03.500），不写时间段}
 
   minimax-h3-max:
     basis: vendor
@@ -386,6 +398,12 @@ models:
         只给尾帧行不行，文档前后说法矛盾，尾帧和首帧一起给
     sources:
       - https://platform.minimax.io/docs/api-reference/video-generation-v2-create
+    lint:
+      language: en
+      max_chars: 7000
+      require: ["overall_soundscape:", "non_diegetic_music:"]
+      forbid:
+        - {re: '\d+(\.\d+)?\s*[-–~]\s*\d+(\.\d+)?\s*s\b', why: 镜头时间要写单个时间点（At 00:03.500），不写时间段}
 
   pika-h3-flex:
     basis: vendor

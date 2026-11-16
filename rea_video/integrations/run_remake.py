@@ -33,21 +33,25 @@ def _video_path(res) -> str | None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--jobs", required=True)
-    ap.add_argument("--only", default="", help="comma-separated shots: 3,5 or shot_003,shot_005")
+    ap.add_argument("--only", default="", help="comma-separated shots or units: 3,5 / shot_003 / G2")
     ap.add_argument("--capsule-root", required=True)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
     jobs_path = Path(args.jobs).expanduser().resolve()
     spec = json.loads(jobs_path.read_text(encoding="utf-8"))
-    only = set()
+    only, only_units = set(), set()
     for x in args.only.split(","):
         x = x.strip()
         if not x:
             continue
+        u = re.fullmatch(r"G\d+", x, re.I)
+        if u:
+            only_units.add(x.upper())
+            continue
         m = re.fullmatch(r"(?:shot_?)?0*(\d+)", x, re.I)
         if not m:
-            sys.exit(f"--only 看不懂 {x!r}：写镜头序号（3）或镜头 id（shot_003），逗号分隔")
+            sys.exit(f"--only 看不懂 {x!r}：写镜头序号（3）、镜头 id（shot_003）或生成单元（G2），逗号分隔")
         only.add(int(m.group(1)))
     results_path = jobs_path.with_name("results.json")
     results = json.loads(results_path.read_text(encoding="utf-8")) if results_path.is_file() else {"results": {}}
@@ -62,8 +66,13 @@ def main() -> None:
         if j.get("executor") == "capsule_cinema" and not od.is_relative_to(out_root):
             sys.exit(f"shot {j.get('shot')}: output_dir 不在 {out_root} 下，拒绝执行")
 
-    todo = [j for j in spec["jobs"] if j["executor"] == "capsule_cinema" and (not only or j["shot"] in only)]
-    if only and not todo:
+    def picked(j: dict) -> bool:
+        if not (only or only_units):
+            return True
+        return j.get("unit") in only_units or bool(only & set(j.get("shots") or [j["shot"]]))
+
+    todo = [j for j in spec["jobs"] if j["executor"] == "capsule_cinema" and picked(j)]
+    if (only or only_units) and not todo:
         have = sorted(j["shot"] for j in spec["jobs"] if j["executor"] == "capsule_cinema")
         sys.exit(f"--only {args.only} 里没有需要生成的镜头；可生成的镜头序号：{have}")
     print(f"{len(todo)} generation job(s); run dir {spec['run_dir']}")
@@ -71,7 +80,7 @@ def main() -> None:
         for j in todo:
             p = dict(j["params"])
             p["prompt"] = p["prompt"][:120] + ("…" if len(p["prompt"]) > 120 else "")
-            print(json.dumps({"shot": j["shot"], "label": j["label"], **p}, ensure_ascii=False))
+            print(json.dumps({"job": j.get("id", j["shot"]), "shots": j.get("shots") or [j["shot"]], "label": j["label"], **p}, ensure_ascii=False))
             if j.get("warning"):
                 print(f"  ! {j['warning']}")
         return
@@ -81,25 +90,32 @@ def main() -> None:
     from env_loader import load_video_agent_env  # noqa: E402
 
     load_video_agent_env(root)
-    from custom_tools.video_generation.video_generation_tool import UniversalVideoGenerationTool  # noqa: E402
+    from custom_tools.video_generation import video_generation_tool as vgt  # noqa: E402
 
-    tool = UniversalVideoGenerationTool()
+    tool = vgt.UniversalVideoGenerationTool()
     failed = []
     for j in todo:
         Path(j["params"]["output_dir"]).mkdir(parents=True, exist_ok=True)
         t0 = time.time()
-        print(f"shot {j['shot']}: {j['params']['generation_type']} via {j['params']['engine']} ...", flush=True)
+        label = j["id"] if j.get("unit") else f"shot {j['shot']}"
+        print(f"{label}: {j['params']['generation_type']} via {j['params']['engine']} ...", flush=True)
         try:
-            res = tool._run(**j["params"])
+            if j.get("unit"):  # a unit's references go straight to the engine's own tool
+                p = {k: v for k, v in j["params"].items() if k != "engine"}
+                res = vgt._tool_for_engine(vgt.normalize_video_engine(j["params"]["engine"]))._run(**p)
+            else:
+                res = tool._run(**j["params"])
         except Exception as exc:  # keep going, record the failure
             res = {"error": str(exc)}
         video = _video_path(res)
-        results["results"][str(j["shot"])] = {"id": j["id"], "video": video, "raw": res if not video else None,
-                                              "seconds": round(time.time() - t0, 1), "trim_to": j["trim_to"]}
+        key = j["id"] if j.get("unit") else str(j["shot"])  # a unit's clip covers several shots: assemble splits it
+        results["results"][key] = {"id": j["id"], "video": video, "raw": res if not video else None,
+                                   "seconds": round(time.time() - t0, 1), "trim_to": j["trim_to"],
+                                   **({k: j[k] for k in ("unit", "part", "parts", "shots")} if j.get("unit") else {})}
         results_path.write_text(json.dumps(results, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
         print(f"  -> {video or res}", flush=True)
         if not video:
-            failed.append(str(j["shot"]))
+            failed.append(key)
     print(f"results: {results_path}")
     if failed:
         sys.exit(f"{len(failed)}/{len(todo)} 个镜头没生成出视频：{', '.join(failed)}（详情见 results.json）")

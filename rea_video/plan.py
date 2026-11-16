@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 
 from .i18n import LangDict, T, join, model_name, semi
+from .util import LOG
 
 CAP = Path(__file__).resolve().parent / "capabilities"
 
@@ -26,27 +27,27 @@ LABEL_ROUTE = {
     "film_footage": ("R21-film-footage", "source_footage", None),
 }
 NOTE = LangDict({
-    "ai_video": "原片为 AI 生成：取原镜头首尾帧做首尾帧生成，可高度还原构图与动作；换主体时先用图像模型改首帧",
+    "ai_video": "原片为 AI 生成：用视频模型重做；和哪些镜头一起生成、喂什么（参考原片、关键帧或首尾帧）按所选模型排，见复刻方案的生成单元",
     "live_action": "原片为实拍：按拍摄方案（景别/机位/打光）重新拍摄；没有拍摄条件时才用 AI 图生视频近似（以首帧为参考）",
     "avatar": "数字人口播：先克隆/合成配音，再用数字人模型由人像 + 音频驱动",
-    "cg_3d": "3D 渲染：可用首尾帧 AI 生成近似；需要精确多角度时走 3D 建模 + Blender 渲染",
+    "cg_3d": "3D 渲染：可以用视频模型近似（见复刻方案的生成单元）；需要精确多角度时走 3D 建模 + Blender 渲染",
     "code_render": "代码渲染：用 Remotion/HTML 按文字轨与版式重建，100% 可控，不需要生成模型",
     "screen_capture": "录屏/截图：用真实界面录屏或网页截图重建",
     "still_motion": "静态图推拉：用一张图 + 测得的缩放/平移参数在本地 ffmpeg 精确复刻",
     "static_hold": "静帧：一张图定格即可",
-    "anim_2d": "2D 动画：先出角色设定图定画风，再首尾帧生成；要精确口型和动作时做 AE / Live2D / Spine 工程",
+    "anim_2d": "2D 动画：先出角色设定图定画风，再用视频模型生成（见复刻方案的生成单元）；要精确口型和动作时做 AE / Live2D / Spine 工程",
     "stop_motion": "定格动画：首选真的拍（手机固定 + 定格 App，每秒约 12 张）；AI 生成只能近似顿挫感",
     "film_footage": "影视片段：画面剪自已有的电影/电视剧/短剧，复刻要找到原片对应片段再剪（版权属于片方，商用要授权）；不用原片时，按同样景别、机位和打光自己拍，或用 AI 做近似画面",
 }, en={
-    "ai_video": "Source is AI-generated: use the shot's first and last frames for first/last-frame generation to closely match composition and motion; to change the subject, edit the first frame with an image model first",
+    "ai_video": "Source is AI-generated: remake it with a video model; which shots share a call and what it is fed (the source clip, keyframes or first / last frames) depend on the chosen model, see the generation units in the remake plan",
     "live_action": "Source is live action: reshoot per the shooting plan (shot size / camera setup / lighting); only fall back to AI image-to-video (first frame as reference) when a shoot is not possible",
     "avatar": "Digital-avatar talking head: clone or synthesize the voice first, then drive an avatar model from a portrait + the audio",
-    "cg_3d": "3D render: AI first/last-frame generation gives an approximation; for precise multiple angles, model in 3D and render in Blender",
+    "cg_3d": "3D render: a video model gives an approximation (see the generation units); for precise multiple angles, model in 3D and render in Blender",
     "code_render": "Code render: rebuild in Remotion / HTML from the text tracks and layout, 100% controllable, no generative model needed",
     "screen_capture": "Screen recording / screenshot: rebuild from a real screen recording or web screenshot",
     "still_motion": "Still-image move: one image + the measured zoom / pan parameters, reproduced exactly with local ffmpeg",
     "static_hold": "Static frame: one held image is enough",
-    "anim_2d": "2D animation: make a character sheet to lock the style, then first/last-frame generation; for precise lip sync and motion, build an AE / Live2D / Spine project",
+    "anim_2d": "2D animation: make a character sheet to lock the style, then generate with a video model (see the generation units); for precise lip sync and motion, build an AE / Live2D / Spine project",
     "stop_motion": "Stop motion: shooting for real is the first choice (phone locked off + a stop-motion app, about 12 frames per second); AI generation only approximates the stepped feel",
     "film_footage": "Film / TV footage: the picture is cut from an existing film, series or short drama; a remake has to find the same clip in the source and cut it (rights belong to the studio, commercial use needs a licence); without the source, shoot it yourself with the same shot size, camera setup and lighting, or approximate it with AI",
 })
@@ -69,7 +70,14 @@ AI_EDITS_EN = {  # (what was done, how) in English, same keys as AI_EDITS
     "object_edit": ("object added / removed / replaced", "after the shoot, change the object in frame with a video-editing model"),
     "beautify": ("beauty filter / face slimming", "the beauty tools in CapCut, beauty camera apps etc. are enough, no generative model needed"),
 }
-CAPSULE_ENGINES = {"seedance2.0": (4, 15), "minimax-h3": (4, 15)}
+def engine_range(engine: str | None, models: dict | None = None) -> tuple[int, int]:
+    """Seconds one call of this model can make (min, max), from the capability map; (4, 15) for a name it lacks."""
+    key = re.sub(r"[^a-z0-9]", "", str(engine or "").lower())
+    for m in (models if models is not None else Planner().models).values():
+        if re.sub(r"[^a-z0-9]", "", m["id"].lower()) == key:
+            d = (m.get("limits") or {}).get("duration_s") or {}
+            return int(d.get("min") or 1), int(d.get("max") or 15)
+    return 4, 15
 
 
 def shot_prompts(shot: dict) -> dict:
@@ -256,6 +264,13 @@ def CODE_STYLES() -> dict[str, tuple[str, str]]:
     }
 
 
+def user_capabilities() -> Path:
+    """Where a user's own capability entries live (models looked up after the shipped map was written)."""
+    from .memory import home
+
+    return home() / "capabilities"
+
+
 def _load(name: str):
     with (CAP / name).open(encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -266,11 +281,24 @@ class Planner:
         self.routing = _load("routing.yaml")
         self.rules = {r["id"]: r for r in self.routing["rules"]}
         self.models = {}
+        notes = _load("prompting.yaml") or {}
+        self.prompting: dict[str, dict] = notes.get("models") or {}   # how to write prompts for each model
         for f in sorted((CAP / "models").glob("*.yaml")):
             for m in (yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get("models", []):
                 self.models[m["id"]] = m
-        notes = _load("prompting.yaml") or {}
-        self.prompting: dict[str, dict] = notes.get("models") or {}   # how to write prompts for each model
+        # the user's own entries (~/.rea-video/capabilities/models/*.yaml, written after looking a model up) win over
+        # the shipped map: same layout, plus an optional "prompting" block per model
+        for f in sorted((user_capabilities() / "models").glob("*.yaml")):
+            try:
+                doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            except yaml.YAMLError as exc:
+                LOG.warning("skipping %s: %s", f, exc)
+                continue
+            for m in doc.get("models", []) if isinstance(doc, dict) else []:
+                if isinstance(m, dict) and m.get("id") and m.get("primitives"):
+                    self.models[m["id"]] = dict(m, local=str(f))
+                    if isinstance(m.get("prompting"), dict):
+                        self.prompting[m["id"]] = m["prompting"]
         self.keyframe_notes: list[str] = notes.get("keyframes") or []  # frame-picking practice shared by all models
 
     def edit_steps(self, edits: list | None) -> list[dict]:
@@ -320,27 +348,6 @@ class Planner:
         if refs:
             plan["references"] = refs
             plan["note"] += semi() + T("生成时作参考：", "references for generation: ") + join(dict.fromkeys(r["kind_zh"] for r in refs))
-        if executor == "capsule_cinema":
-            lo, hi = CAPSULE_ENGINES.get(engine, (4, 15))
-            gen_dur = int(min(hi, max(lo, round(dur + 0.49))))
-            rep = shot_prompts(shot)
-            prompt = rep.get("video_prompt") or (shot.get("vlm") or shot.get("review") or {}).get("description") or ""
-            # the measured / seen framing goes in front, so a remake keeps the camera height, angle and subject position
-            fw, fw_en = framing_words(shot)
-            still = T("，", ", ").join(w for w in fw.split(T("，", ", ")) if not w.startswith(T("镜头", "camera ")))
-            from .performance import of as _acting
-
-            act = _acting(shot)
-            plan["capsule"] = {
-                "engine": engine, "generation_type": gen_type, "duration": gen_dur,
-                "trim_to": round(dur, 3), "aspect_ratio": video.get("aspect_ratio", "9:16"),
-                "prompt": with_acting(_with_framing(prompt, fw), act), "prompt_en": with_acting(_with_framing(rep.get("video_prompt_en", ""), fw_en), act, en=True),
-                "image_prompt": with_acting(_with_framing(rep.get("image_prompt", ""), still), act, image=True), "framing": fw,
-                "needs_split": dur > hi,
-            }
-            if not prompt:
-                plan["capsule"]["prompt_missing"] = T("未运行 VLM，缺少视频提示词；请用 --vlm 重新拆解或手动补写",
-                                                      "VLM was not run, so there is no video prompt; re-run the breakdown with --vlm or write one by hand")
         if executor == "local_ffmpeg":
             m = shot.get("features", {})
             plan["local"] = {"zoom_per_s": m.get("zoom_per_s", 0.0), "pan_px_per_s": m.get("pan_px_per_s", 0.0),

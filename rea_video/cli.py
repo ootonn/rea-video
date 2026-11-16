@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -84,7 +85,7 @@ def cmd_decompose(args) -> int:
     if lang not in LANGS:
         raise SystemExit(f"错误：不支持的报告语言 {lang}（可选：{', '.join(LANGS)}）")
     b = decompose(args.video, out, use_vlm=use_vlm, whole_vlm=not args.no_whole, ocr=not args.no_ocr,
-                  workers=args.workers, engine=args.engine or pref("engine", "seedance2.0"), platform_meta=meta, stems=stems,
+                  workers=args.workers, engine=args.engine or pref("engine"), platform_meta=meta, stems=stems,
                   packaging=not args.no_packaging, lang=lang, asr=not args.no_asr, max_shots_vlm=max(1, args.max_vlm_shots),
                   speakers=not args.no_speakers)
     print(json.dumps({"out": str(out), "verdict": b["summary"]["verdict"], "shots": b["summary"]["shots"],
@@ -234,9 +235,11 @@ def cmd_remake_plan(args) -> int:
 
     bdir = Path(args.breakdown).parent
     root = _capsule_root(args)
-    jobs = build_remake_jobs(read_json(Path(args.breakdown)), bdir, capsule_root=root,
-                             engine=args.engine,  # None: keep the engine chosen at decompose time
-                             mode=args.mode, labels=args.labels.split(",") if args.labels else None)
+    try:  # the jobs are the remake plan's units as they stand: change the model or the swaps with `rea-video plan`
+        jobs = build_remake_jobs(read_json(Path(args.breakdown)), bdir, capsule_root=root)
+    except ValueError as exc:
+        print(f"rea-video: {exc}", file=sys.stderr)
+        return 2
     print(jobs)
     return 0
 
@@ -456,7 +459,7 @@ def cmd_summary(args) -> int:
         base = r["base"]
         alt = sorted(base["probs"].items(), key=lambda kv: -kv[1])[1]
         det = r["deterministic"]["probs"]
-        past = None if base["decided_by"] == "user" else hint_for(max(det, key=det.get), pats)
+        past = None if base["decided_by"] == "user" or r.get("review") else hint_for(max(det, key=det.get), pats)  # looked at: settled
         mat = (r.get("material") or {}).get("origin_zh", "")
         second = T("(用户纠正)", "(user correction)") if base["decided_by"] == "user" else T("(次选 {l} {p:.2f})", "(runner-up {l} {p:.2f})", l=alt[0], p=alt[1])
         lines.append(f"#{r['index']:>2} {r['start']:7.2f}-{r['end']:7.2f} {base['label']:<14} {base['confidence']:.2f} {second} "
@@ -535,6 +538,56 @@ def cmd_correct(args) -> int:
     return 0
 
 
+def cmd_plan(args) -> int:
+    """The remake part of the report, from the remake intent (remake/intent.yaml: model, generate all or only the AI
+    shots, what is swapped for what). The breakdown itself is not touched."""
+    from .generation import load_intent, save_intent
+    from .integrations.capsule_cinema import ref_clips
+    from .pipeline import finalize
+    from .plan import CAP, Planner, user_capabilities
+    from .production import _norm
+
+    out = Path(args.out_dir)
+    intent = load_intent(out)
+    if args.model:
+        intent["model"] = args.model
+    if args.generate:
+        intent["generate"] = args.generate
+    if not intent.get("model"):
+        print(T("rea-video: 还没选模型：问用户用哪个，写进 {p} 的 model，或加 --model", "rea-video: no model yet: ask the user, then set model in {p} or pass --model",
+                p=out / "remake" / "intent.yaml"), file=sys.stderr)
+        return 2
+    pl = Planner()
+    live = {k: m for k, m in pl.models.items() if m.get("status") not in ("shutdown", "deprecated")}
+    m = next((x for x in live.values() if _norm(x["id"]) == _norm(intent["model"]) or _norm(x.get("name", "")) == _norm(intent["model"])), None)
+    if not m:
+        print(f"rea-video: 能力地图里没有 {intent['model']}。先查这个模型的官方文档（单次时长、能不能吃参考视频 / 参考图和各几个、"
+              f"能不能一次出多镜头、首尾帧、原生音频、提示词写法），按 {CAP / 'models' / 'video.yaml'} 的格式写进 "
+              f"{user_capabilities() / 'models' / (re.sub(r'[^a-z0-9.-]+', '-', intent['model'].lower()) + '.yaml')}，再跑一次。"
+              "已有的模型：rea-video models", file=sys.stderr)
+        return 2
+    intent["model"] = m["id"]
+    save_intent(out, intent)
+    b = read_json(out / "breakdown.json")
+    set_lang(b.get("lang", "zh"))
+    b = finalize(b, out, engine=m["id"])
+    plan = b.get("production_plan") or {}
+    n = sum(len(ref_clips(b, out, u)) for u in plan.get("units") or [])
+    v = m.get("verified") or {}
+    print(T("复刻方案已按 {m} 重出（报告第二部分）：{p}", "Remake plan redone for {m} (part two of the report): {p}",
+            m=m["id"], p=b["summary"].get("production", "")))
+    if n:
+        print(T("原片参考 {n} 个（已擦掉字幕）：{d}", "{n} source references (subtitles erased): {d}", n=n, d=out / "remake" / "refs"))
+    print(T("模型资料：{src}，核实于 {d}", "Model facts: {src}, checked {d}", src="本地补充" if m.get("local") else "能力地图", d=v.get("date") or "?"))
+    from .generation import check_lines
+
+    cs = plan.get("checks") or []
+    if cs:
+        print(T("方案检查：", "Plan checks:"))
+        print("\n".join(check_lines(cs)))
+    return 1 if any(c["level"] == "error" for c in cs) else 0
+
+
 def cmd_models(args) -> int:
     """List the generation models the capability map knows, or print how to write prompts for one of them."""
     from .plan import Planner
@@ -567,14 +620,6 @@ def cmd_models(args) -> int:
              "多参考" if "video.multi_reference" in m["primitives"] else "", "参考视频" if "video.reference_video" in m["primitives"] else "",
              "原生音频" if (m.get("audio") or {}).get("native") else ""]
     print(f"{m['id']} · {m['name']}" + (" · " + " · ".join(x for x in facts if x) if any(facts) else ""))
-    if args.plan:  # re-plan an existing breakdown for this model: units, inputs and report are rewritten, the measurements stay
-        from .pipeline import finalize
-
-        out = Path(args.plan)
-        b = read_json(out / "breakdown.json")
-        set_lang(b.get("lang", "zh"))
-        b = finalize(b, out, engine=m["id"])
-        print(T("已按 {m} 重出复刻方案：{p}", "Remake plan redone for {m}: {p}", m=m["id"], p=b["summary"].get("production", "")))
     notes = pl.prompting.get(m["id"])
     if not notes:
         print("这个模型还没有记录提示词写法，按通用规则写。")
@@ -679,12 +724,9 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("-o", "--out")
     c.set_defaults(func=cmd_capsule)
 
-    r = sub.add_parser("remake-plan", help="为 AI 类镜头生成 capsule-cinema 复刻任务")
+    r = sub.add_parser("remake-plan", help="把复刻方案的生成单元写成 capsule-cinema 任务（模型和要换的东西在 rea-video plan 里定）")
     r.add_argument("breakdown")
     r.add_argument("--capsule-root", help="capsule-cinema 仓库；默认 $CAPSULE_CINEMA_ROOT、prefs capsule_root，再退到 ~/code/github/capsule-cinema")
-    r.add_argument("--engine", help="换用另一个视频引擎；默认沿用拆解时的引擎")
-    r.add_argument("--mode", default="first_last_frame", choices=["first_last_frame", "image_to_video", "text_to_video"])
-    r.add_argument("--labels", default="", help="只复刻这些底层类别（逗号分隔），默认 ai_video,cg_3d,live_action,avatar,anim_2d,stop_motion")
     r.set_defaults(func=cmd_remake_plan)
 
     rr = sub.add_parser("remake-run", help="用 capsule-cinema 执行 remake-plan 生成的任务（会计费，先 --dry-run）")
@@ -798,9 +840,14 @@ def main(argv: list[str] | None = None) -> int:
     co.add_argument("--note", help="用户的原话或理由，例如「这是定格动画，不是 AI」")
     co.set_defaults(func=cmd_correct)
 
+    pl_ = sub.add_parser("plan", help="按用户要用的视频模型出复刻方案（报告第二部分）；拆解结果不变")
+    pl_.add_argument("out_dir", help="拆解目录")
+    pl_.add_argument("--model", help="模型 id 或名称，写进 remake/intent.yaml（rea-video models 列出的；没有的先查资料补进 ~/.rea-video/capabilities/models/）")
+    pl_.add_argument("--generate", choices=["ai", "all"], help="ai：只生成原片里 AI 做的镜头，实拍的出拍摄方案；all：整条都用模型生成（换人、换物后整条复刻）")
+    pl_.set_defaults(func=cmd_plan)
+
     mo = sub.add_parser("models", help="列出能力地图里的生成模型；带模型 id 时打印这个模型的提示词写法和关键帧要求")
     mo.add_argument("model", nargs="?", help="模型 id（如 seedance-2.5、kling-3.0）；keyframes 打印关键帧通用做法")
-    mo.add_argument("--plan", metavar="OUT_DIR", help="把这个拆解目录的复刻方案改按该模型重出（不重新拆解）")
     mo.set_defaults(func=cmd_models)
 
     pf = sub.add_parser("prefs", help="查看 / 设置用户偏好（默认引擎、是否开 VLM、VLM 配置文件、复核者、自由文字说明）")

@@ -134,6 +134,47 @@ def overlay_cues(b: dict, spans: list[tuple[float, float]]) -> tuple[list[dict],
     return cues, stickers
 
 
+def unit_shots(b: dict, results: dict, udir: Path, size: tuple[int, int], fps: float) -> dict:
+    """Generation-unit clips (one call made several shots: results keyed "G2", or "G4-1", "G4-2" for the parts of a
+    long shot) -> one clip per shot. The parts are fitted to their lengths and joined; the shots are then cut at the
+    source's own cut points, because the model was given the source stretch and follows its timing.
+    A unit is used only when every part of it came back."""
+    by_unit: dict[str, list[dict]] = {}
+    for v in results.values():
+        if isinstance(v, dict) and v.get("unit"):
+            by_unit.setdefault(v["unit"], []).append(v)
+    if not by_unit:
+        return {}
+    by_index = {r["index"]: r for r in b["shots"]}
+    out: dict[str, dict] = {}
+    udir.mkdir(parents=True, exist_ok=True)
+    for uid, got in by_unit.items():
+        got.sort(key=lambda v: v.get("part", 1))
+        if len(got) < int(got[0].get("parts") or 1) or not all(v.get("video") and Path(v["video"]).is_file() for v in got):
+            continue
+        fitted = []
+        for v in got:
+            f = udir / f"{uid}_p{v.get('part', 1)}.mp4"
+            _fit_clip(Path(v["video"]), f, float(v["trim_to"]), size, fps)
+            fitted.append(f)
+        whole = fitted[0]
+        if len(fitted) > 1:
+            lst = udir / f"{uid}.txt"
+            lst.write_text("".join(f"file '{f.resolve()}'\n" for f in fitted), encoding="utf-8")
+            whole = udir / f"{uid}.mp4"
+            _ff(["-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(whole)])
+        t = 0.0
+        for i in got[0].get("shots") or []:
+            r = by_index.get(i)
+            if not r:
+                continue
+            clip = udir / f"shot_{int(i):03d}.mp4"
+            _original_segment(whole, clip, t, r["duration"], size, fps)
+            out[str(i)] = {"video": str(clip), "unit": uid}
+            t += r["duration"]
+    return out
+
+
 def assemble(breakdown_path: Path, results_path: Path, out_dir: Path | None = None, overlays: bool = False,
              code_video: Path | None = None, extra: dict | None = None) -> str:
     """code_video: a remake of the code-rendered shots on the original timeline (`code-remake`), cut in for them.
@@ -143,7 +184,6 @@ def assemble(breakdown_path: Path, results_path: Path, out_dir: Path | None = No
     jobs_path = results_path.with_name("jobs.json")
     jobs = {j["shot"]: j for j in read_json(jobs_path)["jobs"]} if jobs_path.is_file() else {}
     results = read_json(results_path).get("results", {}) if results_path.is_file() else {}
-    results = {**results, **{str(k): v for k, v in (extra or {}).items()}}
     out_dir = out_dir or results_path.parent
     seg_dir = out_dir / "segments"
     seg_dir.mkdir(parents=True, exist_ok=True)
@@ -153,6 +193,9 @@ def assemble(breakdown_path: Path, results_path: Path, out_dir: Path | None = No
         w, h = h, w
     w, h = w - w % 2, h - h % 2
     fps = float(b["source"]["fps"]) if b["source"]["fps"] and b["source"]["fps"] <= 60 else 30.0
+    results = {**results, **{str(k): v for k, v in (extra or {}).items()}}
+    # unit clips (one call, several shots) become per-shot clips; a shot's own clip, given later, still wins
+    results = {**unit_shots(b, results, seg_dir / "units", (w, h), fps), **{k: v for k, v in results.items() if not (isinstance(v, dict) and v.get("unit"))}}
     parts, legend = [], []
     for sh in b["shots"]:
         dur = sh["duration"]
@@ -223,28 +266,75 @@ def assemble(breakdown_path: Path, results_path: Path, out_dir: Path | None = No
 GENERATED = ("ai_video", "cg_3d", "anim_2d", "stop_motion", "avatar")
 
 
-def _next_step(sh: dict) -> str:
+def _asset_words(a) -> str:
+    """One thing the user has to bring, in words: kind, where in the frame, what it is."""
+    if not isinstance(a, dict):
+        return str(a)
+    bits = [a.get("where") or "", a.get("description") or ""]
+    extra = "，".join(x for x in bits if x)
+    return (a.get("kind_zh") or a.get("kind") or "") + (f"（{extra}）" if extra else "")
+
+
+def _needs(sh: dict) -> list[str]:
+    """What the user must supply for this shot, minus the shot itself (a live-action shot is its own footage)."""
+    lab = sh["base"]["label"]
+    out = []
+    for a in (sh.get("replication") or {}).get("user_assets") or []:
+        if isinstance(a, dict) and lab == "live_action" and a.get("kind") == "real_footage":
+            continue
+        w = _asset_words(a)
+        if w and w not in out:
+            out.append(w)
+    return out
+
+
+def _next_step(sh: dict, plan: dict | None = None) -> str:
     """What still has to happen for a shot that is showing the original."""
     from .i18n import T
 
     lab = sh["base"]["label"]
-    need = (sh.get("replication") or {}).get("user_assets") or []
+    plan = plan or {}
+    need = _needs(sh)
+    tail = T("（要准备：{a}）", " (bring: {a})", a="、".join(need)) if need else ""
+    unit = next((u for u in plan.get("units") or [] if sh["index"] in u.get("shots", [])), None)
+    scene = next((s for s in plan.get("shoot") or [] if sh["index"] in s.get("shots", [])), None)
     if (sh.get("replication") or {}).get("executor") == "motion_drive":
         return T("动作驱动：rea-video drive 出驱动视频，按报告「动作驱动」的路线逐段生成，再 drive --join",
                  "motion drive: rea-video drive for the drive clips, generate each segment by a route under “Motion drive”, then drive --join")
     if lab in GENERATED:
+        if unit:
+            return T("生成 {u}：用报告「生成单元」{u} 的提示词生成", "generate {u}: use the prompt of generation unit {u} in the report", u=unit["id"]) + tail
         return T("生成：用报告「生成单元」的提示词在网页上手动生成，或 remake-plan + remake-run（计费，先 --dry-run）",
-                 "generate: paste the report's generation-unit prompt into a video model, or remake-plan + remake-run (paid; --dry-run first)")
+                 "generate: paste the report's generation-unit prompt into a video model, or remake-plan + remake-run (paid; --dry-run first)") + tail
     if lab == "live_action":
-        return T("拍摄：按报告的拍摄方案拍", "shoot it: follow the report's shooting plan") + (
-            T("（要用到：{a}）", " (needs: {a})", a="、".join(str(a) for a in need)) if need else "")
+        if scene:
+            return T("拍摄 {s}：按报告「拍摄场次」{s} 拍", "shoot {s}: follow shooting scene {s} in the report", s=scene["id"]) + tail
+        return T("拍摄：按报告的拍摄方案拍", "shoot it: follow the report's shooting plan") + tail
     if lab == "screen_capture":
         return T("录屏：按原片的操作重录一遍", "record the screen: redo the same steps")
     if lab == "film_footage":
         return T("影视片段：找到原片对应片段（有版权），或换成自己拍的", "film clip: find it in the source (rights apply) or shoot your own")
     if lab == "code_render":
         return T("代码渲染：rea-video code-remake 没跑成，先单独跑它看报错", "code render: code-remake did not run; run it alone to see why")
-    return T("提供素材", "provide the footage")
+    return T("提供素材", "provide the footage") + tail
+
+
+CODE_DRAFT = 0.6  # a redrawn scene scoring below this against the source is a starting point, not a finished shot
+
+
+def _code_scores(out: Path) -> list[dict]:
+    """Per-scene scores of the code redraw against the source (code/compare/compare.json), if it was scored."""
+    p = out / "code" / "compare" / "compare.json"
+    return (read_json(p).get("scenes") or []) if p.is_file() else []
+
+
+def _code_score(scores: list[dict], sh: dict) -> dict | None:
+    best, ov = None, 0.0
+    for sc in scores:
+        o = min(sh["end"], sc["end"]) - max(sh["start"], sc["start"])
+        if o > ov:
+            best, ov = sc, o
+    return best
 
 
 def remake(out: Path, code: bool = True, overlays: bool = True) -> dict:
@@ -278,25 +368,51 @@ def remake(out: Path, code: bool = True, overlays: bool = True) -> dict:
     how = dict(log["legend"])
     HOW = {"generated": T("生成 / 你的素材", "generated / your footage"), "code": T("代码重画", "redrawn in code"),
            "local_still": T("静图按测得的运动重建", "still rebuilt with the measured move"), "original": T("原片占位", "original as stand-in")}
+    plan = b.get("production_plan") or {}
+    scores = _code_scores(out)
     rows, todo = [], []
     for sh in b["shots"]:
         h = how.get(sh["index"], "original")
-        nxt = _next_step(sh) if h == "original" else ""
+        nxt = _next_step(sh, plan) if h == "original" else ""
+        if h == "code":
+            sc = _code_score(scores, sh)
+            if sc and sc.get("score") is not None and sc["score"] < CODE_DRAFT:
+                h = "code_draft"
+                nxt = T("代码重画只是初稿（和原片对比 {p:.0%}）：在 `code/spec.json` 里改，或照报告「代码合成」重写；{adv}",
+                        "the code redraw is a first draft ({p:.0%} match): edit `code/spec.json` or rewrite it from “Code composition”; {adv}",
+                        p=sc["score"], adv="；".join(sc.get("advice") or []) or T("对照 compare.mp4 看差在哪", "compare with compare.mp4"))
+                need = _needs(sh)
+                if need:
+                    nxt += T("；直接换成你的：{a}", "; use your own: {a}", a="、".join(need))
         rows.append({"shot": sh["index"], "start": sh["start"], "end": sh["end"], "label": sh["base"]["label"], "now": h, "next": nxt})
         if nxt:
             todo.append(sh["index"])
-    done = sum(r["end"] - r["start"] for r in rows if r["now"] != "original")
+    done = sum(r["end"] - r["start"] for r in rows if r["now"] not in ("original", "code_draft"))
     total = sum(r["end"] - r["start"] for r in rows) or 1.0
-    L = [T("# 复刻进度", "# Remake status"), "",
-         T(f"已经替换 {done / total:.0%} 时长；成片 `remake/{Path(log['remake']).name}`，左右对比 `remake/compare.mp4`。",
-           f"{done / total:.0%} of the running time replaced; video `remake/{Path(log['remake']).name}`, side by side `remake/compare.mp4`."), "",
-         T("拿到新的镜头视频（生成的或用户自己的）就写进 `remake/mine.json`：`{\"results\": {\"镜头号\": {\"video\": \"绝对路径\"}}}`，再跑一次 `rea-video remake <目录>`。",
-           "When a clip comes in (generated or the user's own), add it to `remake/mine.json`: `{\"results\": {\"<shot>\": {\"video\": \"<absolute path>\"}}}`, then run `rea-video remake <folder>` again."),
-         "", T("| 镜头 | 时间 | 画面类型 | 现在 | 还要做 |", "| Shot | Time | Picture | Now | To do |"), "|---|---|---|---|---|"]
+    HOW["code_draft"] = T("代码重画（初稿）", "redrawn in code (draft)")
     from .classify import LABEL_ZH
+    from .i18n import shot_ids
 
+    # the same job for several shots is one line: one generation unit, one shooting scene
+    groups: dict[str, list[int]] = {}
     for r in rows:
-        L.append(f"| #{r['shot']} | {r['start']:.1f}–{r['end']:.1f}s | {LABEL_ZH.get(r['label'], r['label'])} | {HOW[r['now']]} | {r['next'] or '—'} |")
+        if r["next"]:
+            groups.setdefault(r["next"], []).append(r["shot"])
+    L = [T("# 复刻进度", "# Remake status"), "",
+         T(f"已经做好 {done / total:.0%} 时长；成片 `remake/{Path(log['remake']).name}`，左右对比 `remake/compare.mp4`（没做的镜头先用原片占位）。",
+           f"{done / total:.0%} of the running time is done; video `remake/{Path(log['remake']).name}`, side by side `remake/compare.mp4` (shots not done yet show the original)."), ""]
+    if groups:
+        L += [T("## 还要做", "## Still to do"), ""]
+        for k, (what, shots_) in enumerate(groups.items(), 1):
+            secs = sum(r["end"] - r["start"] for r in rows if r["shot"] in shots_)
+            L.append(T("{k}. {w}（镜头 {s}，共 {t:.1f}s）", "{k}. {w} (shots {s}, {t:.1f}s)", k=k, w=what, s=shot_ids(shots_), t=secs))
+        L.append("")
+    L += [T("拿到新的镜头视频（生成的或用户自己的）就写进 `remake/mine.json`：`{\"results\": {\"镜头号\": {\"video\": \"绝对路径\"}}}`，再跑一次 `rea-video remake <目录>`。",
+           "When a clip comes in (generated or the user's own), add it to `remake/mine.json`: `{\"results\": {\"<shot>\": {\"video\": \"<absolute path>\"}}}`, then run `rea-video remake <folder>` again."),
+         "", T("## 逐镜", "## Shot by shot"), "",
+         T("| 镜头 | 时间 | 画面类型 | 现在 |", "| Shot | Time | Picture | Now |"), "|---|---|---|---|"]
+    for r in rows:
+        L.append(f"| #{r['shot']} | {r['start']:.1f}–{r['end']:.1f}s | {LABEL_ZH.get(r['label'], r['label'])} | {HOW[r['now']]} |")
     (rdir / "status.md").write_text("\n".join(L) + "\n", encoding="utf-8")
     write_json(rdir / "status.json", {"replaced_share": round(done / total, 3), "shots": rows})
     res.update({"remake": log["remake"], "compare": log["compare"], "status": str(rdir / "status.md"),

@@ -160,8 +160,8 @@ def _content(b: dict) -> str | None:
     beats = narrative.beats(b)
     lines = entities.script(b)
     if beats:
-        return T("**写内容**：原片分 {k} 段（见「内容与结构」的叙事线），照这个顺序写自己的版本，每段对应的秒数照原片",
-                 "**Write the content**: the original runs in {k} steps (the narrative line under “Content and structure”); write yours in the same order and timing",
+        return T("**写内容**：照原片的 {k} 段顺序写自己的版本（叙事线在「内容与结构」）",
+                 "**Write the content**: write yours in the same {k} steps as the original (narrative line under “Content and structure”)",
                  k=len(beats))
     n = (b.get("summary") or {}).get("shots") or 0
     if n <= 1 and not lines:
@@ -170,14 +170,24 @@ def _content(b: dict) -> str | None:
                      "**Write the content**: the original is one take; what it says is in the subtitle text under “Packaging layer”; write your own")
         return T("**写内容**：原片一镜到底，画面内容见分镜表，写自己的版本", "**Write the content**: the original is one take, described in the shot list; write your own")
     if lines:
-        return T("**写内容**：原片台词 {k} 句（「声音」里的脚本表），{n} 个镜头，逐镜写自己的画面和台词",
-                 "**Write the content**: the original has {k} lines (script table under “Sound”) over {n} shots; write your picture and line for each shot", k=len(lines), n=n)
+        return T("**写内容**：把原片的 {k} 句台词换成自己的话（脚本表在「声音」），画面照分镜表",
+                 "**Write the content**: replace the original's {k} lines with your own (script table under “Sound”); pictures follow the shot list", k=len(lines))
     return T("**写内容**：照分镜表的 {n} 个镜头逐镜写自己的画面", "**Write the content**: one picture of your own for each of the {n} shots in the shot list", n=n)
+
+
+def _all_generated(b: dict) -> bool:
+    """The user remakes the whole video with a model (people, animals or products swapped): nothing is filmed or reused."""
+    return (b.get("intent") or {}).get("generate") == "all"
+
+
+def model_chosen(b: dict) -> bool:
+    """The user named the model the remake is for (remake/intent.yaml); until then nothing model-specific is shown."""
+    return bool((b.get("intent") or {}).get("model"))
 
 
 def _material(b: dict, live: bool, refs: bool) -> str | None:
     s = b.get("summary") or {}
-    rm = s.get("real_material") or {}
+    rm = {} if _all_generated(b) else (s.get("real_material") or {})
     kinds: list[str] = []
     for k in rm.get("kinds") or {}:
         k = k.split("（")[0].split(" (")[0].strip()
@@ -185,7 +195,17 @@ def _material(b: dict, live: bool, refs: bool) -> str | None:
             kinds.append(k)
     cast = entities.cast(b)
     who = [c.get("name") for c in cast.get("characters") or [] if c.get("name")]
+    swaps = (b.get("intent") or {}).get("swaps") or []
     out = []
+    if swaps:  # the remake intent says what goes in; the source's own cast is not what needs a picture
+        have = [x["to"] or x["from"] for x in swaps if x.get("image")]
+        bare = [x["to"] or x["from"] for x in swaps if not x.get("image")]
+        if have:
+            out.append(T("参考图已有：{h}", "reference images in hand: {h}", h=T("；", "; ").join(have)))
+        if bare:
+            out.append(T("只有文字描述（各给一张参考图会更稳，跨镜头不变样）：{h}", "described in words only (an image each keeps them the same across shots): {h}",
+                         h=T("、", ", ").join(re.split(r"[，,;；]", x)[0].strip() for x in bare)))
+        who = []
     if kinds:
         out.append(T("画面里的真实素材（{k}）要拿到原文件，清单见「要准备的素材」", "the real material in the picture ({k}) needs the original files, listed under “What to prepare”",
                      k=T("、", ", ").join(kinds)))
@@ -196,30 +216,36 @@ def _material(b: dict, live: bool, refs: bool) -> str | None:
     return (T("**备素材**：", "**Collect material**: ") + T("；", "; ").join(out)) if out else None
 
 
+def _first(x: str) -> str:
+    """The plain-words head of a measured line: before the first dash, semicolon or full stop."""
+    return re.split(r"——|；|; |。|\. ", _after_colon(x), maxsplit=1)[0].strip()
+
+
 def _shoot(b: dict) -> list[str]:
+    """One step: how many scenes, how it is framed and lit, in words a person can set up. The numbers stay under “Shoot”."""
+    if _all_generated(b):
+        return []
     plan, sp = b.get("production_plan") or {}, b.get("shooting_plan") or {}
     shoot = plan.get("shoot") or []
     if not shoot and not sp:
         return []
-    L = []
-    if shoot:
-        st = sum(len(x.get("setups") or []) for x in shoot)
-        if len(shoot) > 1 or st > 1:
-            L.append(T("**排拍摄**：{sc} 个场景、{st} 个机位，同一场景的镜头一起拍，顺序和每个机位要拍哪些镜头见下方「拍摄」",
-                       "**Plan the shoot**: {sc} scenes, {st} camera setups; shoot each scene in one go, the order and the shots per setup are under “Shoot” below",
-                       sc=len(shoot), st=st))
-    look = [x for x in (_aspect(b, "framing"), _aspect(b, "camera")) if x]
+    bits = []
+    if len(shoot) > 1:
+        bits.append(T("{n} 个场景，同一场景的镜头一起拍", "{n} scenes, shoot each scene in one go", n=len(shoot)))
+    look = next((_after_colon(x) for x in sp.get("steps") or [] if x.startswith((T("取景", "Framing")))), "") or _first(_aspect(b, "framing"))
     if look:
-        L.append(T("**机位**：{x}；画幅 {ar}", "**Camera**: {x}; frame {ar}", x=T("；", "; ").join(look), ar=(b.get("source") or {}).get("aspect_ratio") or ""))
-    light = _aspect(b, "lighting")
-    if light:
-        gear = sp.get("gear") or []
-        L.append(T("**布光**：原片测得 {l}", "**Light**: measured on the original: {l}", l=light)
-                 + (T("。可以这样打：{g}", ". One way to get it: {g}", g=T("；", "; ").join(gear)) if gear else ""))
-    grade = _aspect(b, "grade")
+        ar = (b.get("source") or {}).get("aspect_ratio") or ""
+        bits.append((T("手机竖拍，", "phone held vertical, ") if ar == "9:16" else "") + look)
+    light = next((_first(x) for x in sp.get("steps") or [] if x.startswith(T("布光", "Light"))), "") or _first(_aspect(b, "lighting"))
+    gear = (sp.get("gear") or [""])[0]
+    if light or gear:
+        bits.append(T("光：", "light: ") + T("，", ", ").join(x for x in (light, gear) if x))
+    grade = _first(_aspect(b, "grade"))
     if grade:
-        L.append(T("**调色**：{g}", "**Grade**: {g}", g=grade))
-    return L
+        bits.append(T("调色{g}", "grade: {g}", g=grade))
+    if not bits:
+        return []
+    return [T("**拍摄**：", "**Shoot**: ") + T("；", "; ").join(bits) + T("（机位清单在「拍摄」）", " (setups under “Shoot”)")]
 
 
 def _units(b: dict) -> list[dict]:
@@ -227,30 +253,56 @@ def _units(b: dict) -> list[dict]:
 
 
 def _generate(b: dict) -> list[str]:
-    """Prompts first, then first frames, then the calls: the order a generation actually needs its inputs in."""
+    """Generate, then rewrite the prompts for the model actually used: every model reads prompts its own way."""
     plan, units = b.get("production_plan") or {}, _units(b)
     if not units:
         return []
+    if not model_chosen(b):  # the split, the calls and the prompts depend on a model the user has not named yet
+        n = sum(len(u.get("shots") or []) for u in units)
+        secs = sum(float(u.get("duration") or 0) for u in units)
+        return [T("**AI 镜头**：{n} 个镜头（共 {s:.0f} 秒）要用视频模型生成。先选模型：告诉 agent 你用哪个，"
+                  "它按这个模型的能力排好分段、输入和提示词（`rea-video plan <拆解目录> --model <模型>`）",
+                  "**AI shots**: {n} shots ({s:.0f} s) to make with a video model. Pick the model first: tell the agent which one and it "
+                  "plans the stretches, inputs and prompts for it (`rea-video plan <folder> --model <model>`)", n=n, s=secs)]
     L = []
-    if any("缺提示词" in (u.get("prompt") or "") or "missing prompt" in (u.get("prompt") or "").lower() for u in units):
+    if any(u.get("prompt_missing") for u in units):
         L.append(T("**补提示词**：这次没开看图，生成单元里的镜头描述是空的；先让 agent 跑 `rea-video review` 看图补写",
                    "**Fill in the prompts**: this run had no image reading, so the shot descriptions in the units are empty; have the agent run `rea-video review` first"))
-    own = [u for u in units if any(i.get("kind") == "first_frame" and i.get("need") == "yes" and "shot_" in (i.get("source") or "") for i in u.get("inputs") or [])]
-    chained = [u for u in units if any(i.get("kind") == "first_frame" and i.get("need") == "yes" and "shot_" not in (i.get("source") or "") for i in u.get("inputs") or [])]
-    if own:
-        L.append(T("**首帧图**：{k} 个单元从原片首帧起步（`shots/shot_XXX_first.jpg`）；换人物、商品或画风时，先照单元里的首帧提示词重画这张图",
-                   "**First frames**: {k} units start from the original's first frame (`shots/shot_XXX_first.jpg`); to change the person, product or look, redraw it from the unit's first-frame prompt first",
-                   k=len(own))
-                 + (T("；另外 {c} 个单元接在上一个单元的尾帧上，要按顺序生成", "; {c} more units start on the previous unit's last frame, so generate them in order", c=len(chained)) if chained else ""))
-    elif chained:
-        L.append(T("**按顺序生成**：{c} 个单元接在上一个单元的尾帧上", "**Generate in order**: {c} units start on the previous unit's last frame", c=len(chained)))
+    secs = sum(float(u.get("duration") or 0) for u in units)
+    chained = any(any(i.get("kind") == "first_frame" and i.get("need") == "yes" and "shot_" not in (i.get("source") or "") for i in u.get("inputs") or [])
+                  for u in units)
     native = ((b.get("sound_sources") or {}).get("voice") or {}).get("source") == "ai_video_native"
-    L.append(T("**生成**：{u} 个生成单元、共 {c} 次 {m}，每个单元的提示词、要喂的图和衔接方式见下方「AI 生成」",
-               "**Generate**: {u} generation units, {c} calls to {m}; each unit's prompt, input images and how it joins the last are under “AI generation” below",
-               u=len(units), c=plan.get("calls") or len(units), m=model_name(plan.get("model_name")) or T("视频模型", "a video model"))
-             + (T("；原片的对白是随画面一起生成的，台词写在提示词里", "; the original's dialogue was generated with the picture, so the lines go in the prompt") if native else "")
-             + T("。可以手动贴到模型网页上生成，也可以让 agent 用 capsule-cinema 自动跑（按调用计费，先试跑看任务和费用）",
-                 ". Paste them into the model's web page by hand, or have the agent run them through capsule-cinema (paid per call; it does a dry run first to show the jobs and cost)"))
+    calls = plan.get("calls") or len(units)
+    if plan.get("strategy") == "remix":
+        L.append(T("**AI 生成**：{c} 次生成（共 {s:.0f} 秒）。每次把原片对应的一段当参考视频喂给模型，模型照它的分镜和节奏出完这段的镜头，"
+                   "提示词只写每个镜头换成什么；参考视频已擦掉字幕切好，在 `remake/refs/`",
+                   "**Generate**: {c} call{p} ({s:.0f} s). Each call gets its stretch of the source as the reference video and the model follows "
+                   "its shots and pacing; the prompt says only what each shot becomes. The reference clips, subtitles erased, are in `remake/refs/`", c=calls, p="" if calls == 1 else "s", s=secs))
+    elif plan.get("strategy") == "keyframes":
+        L.append(T("**AI 生成**：{c} 次生成（共 {s:.0f} 秒），每次连着出几个镜头。每个镜头给一张原片画面定构图（已擦掉字幕，在 `remake/refs/`），"
+                   "换进去的人、动物、商品各给一张参考图，提示词按镜头顺序写动作",
+                   "**Generate**: {c} call{p} ({s:.0f} s), several shots each. Each shot gets one source frame for composition (subtitles "
+                   "erased, in `remake/refs/`), the swapped-in people, animals and products get reference images, and the prompt lists the shots in order",
+                   c=calls, p="" if calls == 1 else "s", s=secs))
+    else:
+        L.append(T("**AI 生成**：{u} 段（共 {s:.0f} 秒），每段的首帧图、参考图和提示词在「AI 生成」", "**Generate**: {u} unit{p} ({s:.0f} s); first frame, references and prompt for each under “AI generation”",
+                   u=len(units), p="" if len(units) == 1 else "s", s=secs)
+                 + (T("；有几段接在上一段的尾帧上，按顺序生成", "; some start on the previous unit's last frame, so go in order") if chained else ""))
+    L[-1] = (L[-1]
+             + (T("；原片的对白是随画面一起生成的，台词写进提示词", "; the original's dialogue was generated with the picture, so the lines go in the prompt") if native else ""))
+    m = model_name(plan.get("model_name"))
+    done = plan.get("prompts") or {}
+    if done and all(u["id"] in done for u in units):
+        errs = [c for c in plan.get("checks") or [] if c["level"] == "error"]
+        L.append(T("**提示词**：已按 {m} 的写法写好（`remake/prompts.json`）", "**Prompts**: written in {m}'s format (`remake/prompts.json`)", m=m)
+                 + (T("，格式检查通过", ", format checks passed") if not errs else T("，格式检查有 {n} 处要改（见「方案检查」）", ", {n} format problems to fix (see “Plan checks”)", n=len(errs))))
+        return L
+    L.append(T("**按模型改提示词**：报告里的提示词是通用写法，不同模型的写法不一样（分镜头怎么写、参考图怎么指代、台词怎么写都不同）。"
+               "生成前按你实际用的模型的官方提示词指南改一遍，或者让 agent 用这个模型的提示词 skill 优化",
+               "**Adapt the prompts to your model**: the prompts in this report are generic, and every model reads them differently (how shots are "
+               "split, how references are addressed, how dialogue is written). Before generating, rewrite them following the official prompt guide "
+               "of the model you actually use, or have the agent refine them with that model's prompting skill")
+             + (T("；按 {m} 写的要点在「AI 生成」开头", "; notes for {m} at the top of “AI generation”", m=m) if m and plan.get("prompting") else ""))
     return L
 
 
@@ -258,6 +310,11 @@ def _drive(b: dict) -> str | None:
     drive = (b.get("production_plan") or {}).get("drive") or []
     if not drive:
         return None
+    if not model_chosen(b):
+        n = sum(len(u["shots"]) for u in drive)
+        return T("**动作镜头**：{n} 个舞蹈 / 动作镜头要拿原片当动作驱动来生成，先选模型再出路线（`rea-video plan <拆解目录> --model <模型>`）",
+                 "**Motion shots**: {n} dance / action shots to generate driven by the source motion; pick the model first "
+                 "(`rea-video plan <folder> --model <model>`)", n=n)
     n = sum(len(u["shots"]) for u in drive)
     s = sum(u["duration"] for u in drive)
     k = sum(u["segments_est"] for u in drive)
@@ -277,7 +334,7 @@ def _drive(b: dict) -> str | None:
 def _shoot_few(b: dict) -> str | None:
     """A handful of live shots inside a generated video: point at the plan instead of measuring the whole film as if it were shot."""
     shoot = (b.get("production_plan") or {}).get("shoot") or []
-    if not shoot:
+    if not shoot or _all_generated(b):
         return None
     n = sum(len(x.get("shots") or []) for x in shoot)
     return T("**实拍镜头**：{n} 个镜头要自己拍，机位和布光见下方「拍摄」", "**Live shots**: {n} shots to film yourself; camera and light under “Shoot” below", n=n)
@@ -293,15 +350,17 @@ def _avatar(b: dict) -> str | None:
 def _code(b: dict) -> str | None:
     if not (b.get("production_plan") or {}).get("code"):
         return None
-    return T("**动效画面**：`rea-video code-remake <报告目录>` 会按测得的版式和动效写出一个能改的工程和第一版成片，改文字和数据后重跑；每段画面元素和动效时间见下方「代码合成」",
-             "**Motion graphics**: `rea-video code-remake <report dir>` writes an editable project and a first cut from the measured layout and motion; change the text and data and rerun; elements and timing per scene under “Code build” below")
+    return T("**动效画面**：让 agent 跑 `rea-video code-remake` 出一版能改的工程，在它上面换文字和画面，不要从零写；"
+             "第一版只是起点，和原片差在哪见「代码合成」",
+             "**Motion graphics**: have the agent run `rea-video code-remake` for an editable first version and change the text and pictures "
+             "on top of it rather than starting from scratch; the first version is only a start, where it differs from the original is under “Code build”")
 
 
 def _local(b: dict) -> str | None:
     if not (b.get("production_plan") or {}).get("local"):
         return None
-    return T("**静图推拉**：换成自己的图，推拉方向和速度用下方「本地重建」里测得的数；`rea-video remake` 会按这些数自动做出来",
-             "**Stills with moves**: swap in your images and use the measured direction and speed under “Local rebuild” below; `rea-video remake` builds them from those numbers")
+    return T("**静图推拉**：换成自己的图，`rea-video remake` 会按原片的推拉方向和速度自动做出来",
+             "**Stills with moves**: swap in your images; `rea-video remake` moves them the way the original does")
 
 
 def _footage(b: dict) -> str | None:
@@ -319,12 +378,17 @@ def _voice(b: dict) -> str | None:
     src = _src(b, "voice")
     k = len(entities.script(b))
     acted = performance.table(b)[0]
-    bits = [T("原片是 {s}", "the original is {s}", s=src)] if src else []
+    src = src.strip()
+    if src in (T("待确认", "to confirm"),) or src.startswith(T("待确认", "to confirm")):
+        bits = [T("原片人声的来源待确认", "where the original voice comes from is to confirm")]
+    else:
+        bits = [T("原片是{sp}{s}", "the original is {s}", s=src, sp=" " if src[:1].isascii() else "")] if src else []
+    bits.append(T("自己录或用 TTS 配", "record it yourself or use TTS"))
     if k:
-        bits.append(T("台词 {k} 句在「声音」的脚本表里，每句的语速和停顿也在那里", "{k} lines in the script table under “Sound”, with the pace and pauses of each", k=k))
+        bits.append(T("{k} 句台词和每句的语速在「声音」的脚本表", "{k} lines with their pace in the script table under “Sound”", k=k))
     if acted:
         bits.append(T("语气照「表演与情绪」", "delivery per “Acting and emotion”"))
-    return (T("**人声**：", "**Voice**: ") + T("；", "; ").join(bits)) if bits else None
+    return T("**配音**：", "**Voice**: ") + T("；", "; ").join(bits)
 
 
 def _edit_detail(b: dict) -> list[str]:
@@ -344,11 +408,9 @@ def _edit_detail(b: dict) -> list[str]:
 
 
 def _edit(b: dict) -> str:
-    detail = _edit_detail(b)
     trans = {k: v for k, v in ((b.get("summary") or {}).get("transitions") or {}).items() if k not in ("start", "cut")}
     return (T("**剪辑**：按分镜表的顺序和时长剪，{c}", "**Edit**: follow the order and lengths in the shot list; {c}", c=_cut(b))
-            + (T("；", "; ") + T("；", "; ").join(detail) if detail else "")
-            + (T("；有 {n} 处不是硬切，位置见下方「剪辑」", "; {n} transitions are not hard cuts, see “Edit” below", n=sum(trans.values())) if trans else ""))
+            + (T("；{n} 处转场在「剪辑」", "; {n} transitions under “Edit”", n=sum(trans.values())) if trans else ""))
 
 
 def _packaging(b: dict) -> str | None:
@@ -357,15 +419,21 @@ def _packaging(b: dict) -> str | None:
     subs = [c for c in (b.get("packaging") or {}).get("text_cues") or [] if c.get("kind") == "subtitle"]
     if not pk and not subs:
         return None
-    first = next((x for x in pk if x.startswith((T("字幕", "Subtitle"), T("花字", "Styled"), T("标题", "Title")))), "")
-    if not first and not subs:
-        return T("**字幕和花字**：时间和样式见「剪辑包装层」", "**Subtitles and styled text**: timing and style under “Packaging layer”")
-    out = T("**字幕和花字**：{p}", "**Subtitles and styled text**: {p}", p=first) if first else T("**字幕和花字**：", "**Subtitles and styled text**: ")
+    bits = []
     if subs and files.get("srt"):
-        out += (T("；", "; ") if first else "") + T("字幕时间轴存成了 `{f}`（标准 SRT），能导入 SRT 的剪辑软件都能直接用，换成自己的话即可",
-                 "the subtitle timing is saved as `{f}` (standard SRT), which any editor that imports SRT can use; replace the words",
-                 f=files["srt"])
-    return out + T("；其余花字、贴纸的时间和样式见「剪辑包装层」", "; the other styled text and stickers, with timing and style, under “Packaging layer”")
+        sub = next((x for x in pk if x.startswith(T("字幕", "Subtitle"))), "")
+        style = _first(sub) if sub else ""
+        style = T("、", ", ").join(w for w in re.split(r"[、,]\s*", style) if not re.search(r"字高|height", w))
+        bits.append(T("字幕导入 `{f}` 换成自己的话", "import `{f}` and replace the words", f=files["srt"])
+                    + (T("，样式：{s}", ", style: {s}", s=style) if style else ""))
+    # counts only ("花字 5 处"), as the verdict states them; what each one is stays under “Packaging layer”
+    verdict = str((b.get("summary") or {}).get("verdict") or "")
+    rest = [x.strip() for x in re.split(r"[、,]\s*", verdict.split(T("剪辑包装：", "editing package: "))[-1])
+            if x.strip().startswith((T("花字", "styled"), T("标题", "title"), T("贴纸", "sticker"))) and re.search(r"\d", x)] if T("剪辑包装：", "editing package: ") in verdict else []
+    if rest:
+        bits.append(T("、", ", ").join(rest))
+    bits.append(T("时间和样式在「剪辑包装层」", "timing and style under “Packaging layer”"))
+    return T("**字幕和花字**：", "**Subtitles and styled text**: ") + T("；", "; ").join(bits)
 
 
 def _music(b: dict) -> str | None:
@@ -390,19 +458,19 @@ def _music(b: dict) -> str | None:
         return T("**配乐**：{x}；动作是踩着这首歌编的，用原曲（商用先确认版权）或同 BPM、重拍位置一样的曲子，生成和拼回都对着它",
                  "**Music**: {x}; the moves were set to this song, so use it (check the rights for commercial use) or one at the same BPM with the "
                  "accents in the same places, and generate and assemble against it", x=x)
-    return T("**配乐**：{x}；找同速度、同情绪的曲子，风格和段落见「声音」", "**Music**: {x}; find a track at the same tempo and mood, style and sections under “Sound”", x=x)
+    return T("**配乐**：找同速度、同情绪的曲子（{x}）", "**Music**: find a track at the same tempo and mood ({x})", x=x)
 
 
 def _sfx(b: dict) -> str | None:
     sfx = [e for e in (b.get("audio_plan") or {}).get("sfx_merged", []) if not e.get("in_scene")]
     if not sfx:
         return None
-    return T("**音效**：{k} 处，时间点和各自卡在哪个画面事件上见「声音」，每处都能先试听", "**Sound effects**: {k}, with the time and the picture event each one hits under “Sound”; each can be played first",
+    return T("**音效**：{k} 处，按「声音」里的时间点从音效库找同类的放上", "**Sound effects**: {k}; place similar ones from a library at the times under “Sound”",
              k=len(sfx))
 
 
 def _assemble() -> str:
-    return T("**拼回去对照**：拍好或生成好的镜头交给 agent，用 `rea-video remake` 拼回原时间线，还没做的镜头先用原片占位，会出一条和原片左右并排的对比片",
+    return T("**拼回对照**：做好的镜头交给 agent 跑 `rea-video remake`，拼回原时间线（没做的先用原片占位），出一条和原片并排的对比片",
              "**Put it together and compare**: hand the shots you made to the agent; `rea-video remake` places them on the original timeline, keeps the original where yours are missing, and renders a side-by-side comparison with the original")
 
 
@@ -428,7 +496,7 @@ def steps(b: dict, kind: str, also: str | None = None) -> list[str]:
     order = [{"content": content, "material": mat}.get(x, x) if isinstance(x, str) else x for x in spec] if spec else None
     if order is None:
         if live:
-            order = [content, mat, _shoot, _drive, _voice, _edit, _packaging, _music, _sfx]
+            order = [content, mat, _shoot, _generate, _drive, _voice, _edit, _packaging, _music, _sfx]
         else:  # a few live shots inside a generated video get one pointer; a real live share gets the full shoot steps
             shoot = _shoot if also in _LIVE_KINDS or kind in _LIVE_KINDS else _shoot_few
             order = [content, mat, _generate, _drive, _avatar, shoot, _code, _local, _voice, _edit, _packaging, _music, _sfx]
@@ -447,8 +515,8 @@ def md(b: dict) -> list[str]:
     if not ks:
         return []
     main = ks[0][0]
-    L = [T("这条属于「{k}」。下面每一步的数都是从这条原片测出来的，照着做，做完拿来对照。",
-           "This is a {k}. Every number in the steps below was measured on the original; follow them and check yours against it.", k=NAME_ZH[main])]
+    L = [T("这条属于「{k}」。按下面的顺序做，每步要的细节在后面对应的小节里。",
+           "This is a {k}. Do the steps in this order; the detail for each is in the matching subsection below.", k=NAME_ZH[main])]
     if len(ks) > 1:
         L[0] += T("另有 {p:.0%} 的时长是「{k}」，步骤里一起列了。", " {p:.0%} of the time is a {k}; its steps are included.", p=ks[1][1], k=NAME_ZH[ks[1][0]])
     L.append("")

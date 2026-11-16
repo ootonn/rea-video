@@ -25,6 +25,7 @@
           "type": "object", "additionalProperties": false,
           "properties": {"image": {"type": "integer"}, "video": {"type": "integer"}, "audio": {"type": "integer"}, "total": {"type": "integer"}}
         },
+        "ref_video_s": {"$ref": "#/$defs/range", "description": "Total length of the reference videos one request accepts"},
         "keyframes": {"type": "integer"},
         "shots_per_generation": {"type": "integer"},
         "prompt_tokens": {"type": "integer"},
