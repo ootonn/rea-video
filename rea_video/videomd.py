@@ -33,10 +33,10 @@ MAP_BLOCK = "videomd-map"
 # producer-side values -> the neutral ids in the spec
 DECIDED_BY = {"deterministic": "tools", "fused": "model", "fused_agent": "agent", "user": "human"}
 OVERLAY_ID = {"huazi": "styled_text"}
-# shot-boundary kinds from the cut detector -> transition ids in the spec; plain cuts are not written
+# shot-boundary kinds from the cut detector -> transition ids in the spec (`x-` = not in the taxonomy); plain cuts are not written
 TRANSITION_ID = {"jump": "jump_cut", "fade": "fade_through", "dissolve": "dissolve", "wipe": "wipe", "flash": "flash",
-                 "slide": "slide", "whip": "whip_pan", "zoom": "zoom", "spin": "spin", "blur": "blur", "glitch": "glitch",
-                 "shake": "shake", "effect": "effect"}
+                 "slide": "slide", "whip": "whip", "zoom": "zoom", "spin": "spin", "blur": "x-blur", "glitch": "glitch",
+                 "shake": "x-shake", "effect": "x-effect", "mg_transition": "x-mg_transition"}
 
 # timeline keys, in line order; `~` = inferred by the tools
 KEYS = ("story", "seen", "act", "layers", "camera", "transition", "overlay", "made~", "material~", "remake", "flag")
@@ -87,19 +87,22 @@ def _shot_name(i: int) -> str:
 # ------------------------------------------------------------------ timeline (the spine) --------------------------
 
 _TRANSITION_WORDS = {"jump_cut": ("跳切", "jump cut"), "fade_through": ("黑场/白场过渡", "fade through"), "dissolve": ("叠化", "dissolve"),
-                     "wipe": ("划像", "wipe"), "flash": ("闪白", "flash"), "slide": ("推移", "slide"), "whip_pan": ("甩镜", "whip pan"),
-                     "zoom": ("缩放转场", "zoom"), "spin": ("旋转转场", "spin"), "blur": ("模糊转场", "blur"), "glitch": ("故障转场", "glitch"),
-                     "shake": ("抖动转场", "shake"), "effect": ("转场特效", "transition effect")}
+                     "wipe": ("划像", "wipe"), "flash": ("闪白", "flash"), "slide": ("推移", "slide"), "whip": ("甩镜", "whip pan"),
+                     "zoom": ("缩放转场", "zoom"), "spin": ("旋转转场", "spin"), "x-blur": ("模糊转场", "blur"), "glitch": ("故障转场", "glitch"),
+                     "x-shake": ("抖动转场", "shake"), "x-effect": ("转场特效", "transition effect"),
+                     "x-mg_transition": ("版式切换", "layout change")}
 
 
 def _transition_in(r: dict) -> dict:
-    """The spec's transition_in for a shot record: type, and length / direction when measured; {} for a plain cut."""
+    """The spec's transition_in for a shot record: type, and time / direction when measured; {} for a plain cut."""
     tid = TRANSITION_ID.get(r.get("transition_in") or "cut")
     if not tid:
         return {}
     tr = r.get("transition") or {}
-    return {"type": tid, **({"duration": tr["duration"]} if tr.get("duration") else {}),
-            **{k: tr[k] for k in ("direction", "via", "mode") if tr.get(k)}}
+    # the spec's time spans the start of the shot
+    span = ({"time": [round(min(tr["start"], r["start"]), 3), round(max(tr["end"], r["start"]), 3)]}
+            if tr.get("start") is not None and tr.get("end") is not None and "start" in r else {})
+    return {"type": tid, **span, **{k: tr[k] for k in ("direction", "via", "mode") if tr.get(k)}}
 
 
 def timeline_line(r: dict, roles: dict, units: dict) -> str:

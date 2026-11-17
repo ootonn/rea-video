@@ -238,6 +238,8 @@ def _draft(strategy: str, refs: list[dict], brief: list[dict], swaps_txt: list[s
     lines = []
     for i, x in enumerate(brief, 1):
         text = x["action"] or T("（缺镜头描述：先看图复核补写）", "(no description: write one in the image review)")
+        if strategy == "keyframes" and not x.get("composition") and x.get("framing"):
+            text = x["framing"] + T("。", ". ") + text
         if x.get("composition"):
             text += T("（构图参考 {k}）", " (composition: {k})", k=x["composition"])
         if len(brief) == 1:
@@ -299,7 +301,13 @@ def build_unit(seg: list[dict], k: int, strategy: str, spec: dict, own: list[dic
                              "what": (T("第 {k} 次：", "call {k}: ", k=part + 1) if parts > 1 else "")
                              + T("原片 {s}（擦掉字幕和贴纸）", "source {s} (subtitles and stickers erased)", s=join(f"{a:.1f}–{z:.1f}s" for a, z in rr))})
     elif strategy == "keyframes":
+        # image slots left after the user's own: when they run short, the longest shots keep their source frame and the
+        # rest get their framing in words (a call kept whole beats a frame for every shot when subjects have no image)
+        room = max(0, spec["images"] - len(refs))
+        framed = {r["index"] for r in sorted(seg, key=lambda r: -r["duration"])[:room]}
         for r in seg:
+            if r["index"] not in framed:
+                continue
             tag = f"@图片{sum(1 for x in refs if x['tag'].startswith('@图片')) + 1}"
             keyframe_tag[r["index"]] = tag
             refs.append({"tag": tag, "keyframe": r["index"], "t": round(r["start"] + min(0.3, r["duration"] / 2), 3),
@@ -311,6 +319,7 @@ def build_unit(seg: list[dict], k: int, strategy: str, spec: dict, own: list[dic
             "generate_s": round(dur / parts, 3), "model": (model or {}).get("id"), "model_name": model_name((model or {}).get("name")),
             "refs": refs, "brief": brief, "draft": _draft(strategy, refs, brief, swaps_txt, style),
             "inputs": _inputs(strategy, refs, seg, spec)}
+    unframed = [x["shot"] for x in brief if strategy == "keyframes" and not x.get("composition")]
     missing = [x["shot"] for x in brief if not x["action"]]
     if missing:
         unit["prompt_missing"] = missing
@@ -318,8 +327,12 @@ def build_unit(seg: list[dict], k: int, strategy: str, spec: dict, own: list[dic
                "how": performance.ROUTE_ZH[performance.route_kind(a, r["base"]["label"])]} for r in seg for a in [performance.of(r)] if a]
     if acting:
         unit["acting"] = acting
+    if unframed:
+        unit["unframed"] = unframed
+        unit["note"] = T("参考图名额不够：镜头 {s} 没配原片画面，构图写在提示词里", "not enough image slots: shots {s} have no source frame, their framing is written in the prompt",
+                         s=shot_ids(unframed))
     if len(ranges) > 1:
-        unit["note"] = T("这几镜在成片里被插入画面隔开：连着生成，剪辑时把插入画面放回去",
+        unit["note"] = (unit.get("note", "") + semi() if unit.get("note") else "") + T("这几镜在成片里被插入画面隔开：连着生成，剪辑时把插入画面放回去",
                          "these shots are separated by inserts in the cut: generate them together and put the inserts back in the edit")
     return unit
 
@@ -357,7 +370,10 @@ def plan_generation(b: dict, model: dict | None, intent: dict, new_scene: set[in
     if strategy == "remix":
         max_s, max_shots = min(spec["max"], spec["ref_total"]), spec["shots"]
     elif strategy == "keyframes":
-        max_s, max_shots = spec["max"], min(x for x in (spec["shots"], spec["images"] - len(own)) if x)
+        # a swapped-in subject with no image is held only by its description: every extra call is another chance for it
+        # to come out different, so keep calls whole and let some shots go without a source frame
+        text_only = any(not s.get("image") for s in intent.get("swaps") or [])
+        max_s, max_shots = spec["max"], (spec["shots"] if text_only else min(x for x in (spec["shots"], spec["images"] - len(own)) if x))
     elif strategy == "text" and spec["multi_shot"]:
         max_s, max_shots = spec["max"], spec["shots"]
     else:
@@ -406,6 +422,14 @@ def lint_prompt(text: str, n_images: int, n_videos: int, notes: dict | None) -> 
     return errs
 
 
+SHOT_RES = (r"\[Shot (\d+)\]", r"镜头\s*(\d+)", r"\bShot (\d+)\b")
+
+
+def shots_written(text: str) -> int:
+    """How many shots a prompt numbers (0 when it does not number them)."""
+    return max([int(x) for p in SHOT_RES for x in re.findall(p, text)] or [0])
+
+
 def unit_images(u: dict) -> list[dict]:
     """The images one unit sends, in prompt order."""
     return [r for r in u.get("refs") or [] if r["tag"].startswith("@图片")]
@@ -449,6 +473,13 @@ def checks(plan: dict, intent: dict, prompts: dict[str, str], notes: dict | None
         else:
             for e in lint_prompt(final, n_img, n_vid, notes):
                 add("error", f"{u['id']}: {e}", u["id"])
+            n = shots_written(final)
+            if n and len(u["shots"]) > 1 and n != len(u["shots"]):  # written for another split of the shots
+                add("error", T("{u} 的最终提示词写了 {n} 个镜头，单元里有 {m} 个：按现在的单元重写", "{u}'s final prompt numbers {n} shots but the unit has {m}: rewrite it for the current unit",
+                               u=u["id"], n=n, m=len(u["shots"])), u["id"])
+    stale = sorted(set(prompts) - {u["id"] for u in units})
+    if stale:
+        add("warn", T("remake/prompts.json 里的 {s} 已经不在方案里，用不到了", "{s} in remake/prompts.json are not in the plan", s="、".join(stale)))
     calls = sum(u["calls"] for u in units)
     if units and gen_seconds > 0 and calls / (gen_seconds / 60) > CALLS_PER_MIN:
         add("warn", T("{c} 次生成做 {s:.0f} 秒，切得太碎", "{c} calls for {s:.0f}s: cut too finely", c=calls, s=gen_seconds))
